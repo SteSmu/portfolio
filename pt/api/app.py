@@ -1,6 +1,7 @@
 """FastAPI application — portfolio tracker REST API.
 
-Routes are progressively added under /api/. Mirrors claude-trader's structure.
+All routes are mounted under /api/. CORS is open for the dev frontend on
+ports 5173/5174 plus the API itself.
 """
 
 from __future__ import annotations
@@ -9,6 +10,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from pt import __version__
+from pt.api.routes.assets import router as assets_router
+from pt.api.routes.holdings import router as holdings_router
+from pt.api.routes.performance import router as performance_router
+from pt.api.routes.portfolios import router as portfolios_router
+from pt.api.routes.sync import router as sync_router
+from pt.api.routes.transactions import router as transactions_router
 from pt.db.connection import is_available
 
 app = FastAPI(
@@ -27,6 +34,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+API_PREFIX = "/api"
+app.include_router(portfolios_router, prefix=API_PREFIX)
+app.include_router(transactions_router, prefix=API_PREFIX)
+app.include_router(holdings_router, prefix=API_PREFIX)
+app.include_router(assets_router, prefix=API_PREFIX)
+app.include_router(performance_router, prefix=API_PREFIX)
+app.include_router(sync_router, prefix=API_PREFIX)
 
 
 @app.get("/api/health")
