@@ -37,6 +37,10 @@ deep-dive map. Hub `SKILL.md` lists 11 references. Quick-orientation table:
 - **Holdings are derived from transactions.** No separate holdings table.
   Every read aggregates the tx log; correcting a wrong tx auto-corrects
   everything downstream.
+- **Holdings SQL must mirror `cost_basis.py` semantics.** Both modules
+  treat `transfer_in` as buy-equivalent (cost = qty × price + fees) and
+  `transfer_out` as sell-equivalent. Drift between them silently zeros
+  out cost basis for any portfolio populated solely via PDF import.
 - **Audit is DB-enforced.** `fn_log_transaction_audit` writes audit rows
   on INSERT/UPDATE. Soft-delete (`UPDATE deleted_at`) preserves history;
   hard-delete is test-only and bypasses the audit FK by design.
@@ -48,6 +52,16 @@ deep-dive map. Hub `SKILL.md` lists 11 references. Quick-orientation table:
   the per-provider error breakdown.
 - **Read-only-on-brokers.** No order execution, no broker writes. PDF
   imports, manual entry, and read-only price syncs only.
+- **Symbol priority: ticker > ISIN > name.** PDF parsers populate
+  `ParsedHolding.bloomberg_ticker` whenever the source carries one;
+  `.symbol` resolves the priority cascade. Twelve Data + Yahoo both key
+  off bare tickers — falling back to ISIN works for the holdings table
+  but breaks `auto-prices`.
+- **Skip > wrong-import.** When OCR / parsing can't recover a critical
+  field (entry_price, entry_date), `to_transactions` returns no row
+  rather than fabricating a value. A wrong cost basis contaminates all
+  downstream P&L; a missing row is flagged in `warnings` and the user
+  fills it in via `pt tx add`.
 
 ## Quick start
 
@@ -63,6 +77,8 @@ PT_DB_PORT=5434 uvicorn pt.api.app:app --reload --port 8430
 cd frontend && npm install && npm run dev   # http://localhost:5174
 
 # Prod (own TimescaleDB + persistent volume)
+# On macOS, source .env first — Compose v2 may not auto-load it for substitution:
+set -a && . .env && set +a
 docker compose -f docker-compose.prod.yml up -d --build
 # → http://localhost:5174
 ```
@@ -91,7 +107,14 @@ pt perf summary -p 1
   DB-level UNIQUE constraint + an `import_log` / `audit` row for human
   inspection.
 - **Sync over async** for fetchers (`httpx.Client`). Async refactor
-  deferred until parallelism is a measurable bottleneck.
+  deferred until parallelism is a measurable bottleneck. Yahoo fetcher
+  wraps `yfinance` (synchronous scrape) and follows the same shape.
+- **Provider-fallback chains** (e.g. Twelve Data → Yahoo for stock/etf)
+  preserve the primary's error on the per-symbol outcome row even when
+  the secondary succeeds, so the UI surfaces "got NOVN via Yahoo because
+  TD said: needs Pro plan" rather than a silent provider switch. Bare
+  ticker is the DB key regardless of provider; `_YAHOO_SYMBOL_MAP` in
+  `pt/api/routes/sync.py` translates non-US tickers to Yahoo form.
 
 ## What lives elsewhere
 
@@ -109,9 +132,18 @@ pt perf summary -p 1
 
 ## Status
 
-15 commits in. ~1750 LOC Python + ~1200 LOC TypeScript + 174 tests
-green. PDF importer ships for LGT Bank Vermögensaufstellung; other
-brokers are a registry-extension away. Next-up phases tracked in
-`.claude/plans/portfolio-bootstrap.md`: Phase 7 (Tax DE-Reports),
-Phase 8 (Allocation/Income/Settings pages), Phase 9 (claude-trader
-bridge).
+204 tests green. PDF importer ships for LGT Bank Vermögensaufstellung
+including OCR recovery for date / price-column fragments and Bloomberg
+ticker extraction; other brokers are a registry-extension away
+(`pt/importers/pdf/format_detect.py`).
+
+Auto-prices supports CoinGecko (crypto), Twelve Data primary + Yahoo
+Finance fallback (stock/etf). SIX Swiss listings (NOVN/ROG/SDZ) routed
+directly to Yahoo via `_YAHOO_SYMBOL_MAP`.
+
+Next-up tracked in `.claude/plans/portfolio-bootstrap.md`: Phase 7 (Tax
+DE-Reports), Phase 8 (Allocation/Income/Settings pages), Phase 9
+(claude-trader bridge). Frontend UX backlog (Phase A): light-mode toggle,
+Allocation-Donut, AssetDetail price chart with cost-basis line + tx
+markers, FX-converted EUR totals — `lightweight-charts` already
+installed but unused; Recharts to be added when starting Phase A.

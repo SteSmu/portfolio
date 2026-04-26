@@ -1,6 +1,6 @@
 ---
 name: project-architecture
-description: Architectural deep-dive for the portfolio tracker. Use when you need to know where things live, how data flows between Python backend and React frontend, which DB tables back which feature, how performance math is structured (TWR/MWR/cost-basis), how news + live-pricing + PDF-import pipelines work, where the audit trigger lives, how the API + CLI relate, how frontend pages map to API routes, where logging + request-ids hook in, how prod Docker + nginx are wired, where conventions diverge from claude-trader. Activate keywords - portfolio, holdings, transactions, performance engine, TWR, MWR, XIRR, cost basis, FIFO, LIFO, audit trigger, news, marketaux, finnhub, coingecko, twelve data, frankfurter, market_meta, candles, asset_news, asset_insights, insights, openrouter, llm, fastapi, typer, pt cli, react, vite, tailwind, tanstack query, holdings page, asset detail, performance page, transactions page, dashboard, request id, structured logging, json logging, healthcheck, docker prod, nginx, ci workflow, github actions, claude-trader bridge, decimal money math, frontend api client, fmtMoney fmtPrice fmtQty, pdf import, lgt bank, broker statement, vermögensaufstellung, pdfplumber, transfer_in, import_log, file_hash, idempotent import, ocr, dockerfile, docker-compose, docker-entrypoint-initdb, persistent volume, pt_db_data, multi-stage build.
+description: Architectural deep-dive for the portfolio tracker. Use when you need to know where things live, how data flows between Python backend and React frontend, which DB tables back which feature, how performance math is structured (TWR/MWR/cost-basis), how news + live-pricing + PDF-import pipelines work, where the audit trigger lives, how the API + CLI relate, how frontend pages map to API routes, where logging + request-ids hook in, how prod Docker + nginx are wired, where conventions diverge from claude-trader. Activate keywords - portfolio, holdings, transactions, performance engine, TWR, MWR, XIRR, cost basis, FIFO, LIFO, audit trigger, news, marketaux, finnhub, coingecko, twelve data, yahoo finance, yfinance, fallback chain, frankfurter, market_meta, candles, asset_news, asset_insights, insights, openrouter, llm, fastapi, typer, pt cli, react, vite, tailwind, tanstack query, holdings page, asset detail, performance page, transactions page, dashboard, request id, structured logging, json logging, healthcheck, docker prod, nginx, ci workflow, github actions, claude-trader bridge, decimal money math, frontend api client, fmtMoney fmtPrice fmtQty, pdf import, lgt bank, broker statement, vermögensaufstellung, pdfplumber, transfer_in, transfer_out, cost_delta, bloomberg ticker, ticker priority, isin, valor, ocr recovery, _try_parse_date, _yahoo_symbol_map, six swiss exchange, novn, rog, sdz, googl, alphabet, marvell, einstandskurs, aktueller kurs, import_log, file_hash, idempotent import, ocr, dockerfile, docker-compose, docker-entrypoint-initdb, persistent volume, pt_db_data, multi-stage build, .env compose, macos compose env quirk.
 ---
 
 # Portfolio Tracker — Architecture
@@ -41,11 +41,13 @@ INSERT/UPDATE on transactions automatically.
 -> Details: [db.md](references/db.md)
 
 ### Data fetchers (`pt/data/`)
-Six sync httpx clients: CoinGecko (free), Twelve Data (key), Frankfurter (ECB,
-free), Finnhub (key), Marketaux (key), Binance (claude-trader-shared). All
-write into `public.candles` (prices) or `public.market_meta` (FX) via
-`store.insert_candles` / `store.insert_fx_rates`. News fetchers write into
-`portfolio.asset_news` via `pt.db.news.upsert_many`.
+Six sync httpx clients (CoinGecko free, Twelve Data key, Frankfurter ECB
+free, Finnhub key, Marketaux key, Binance claude-trader-shared) plus
+`yahoo.py` wrapping `yfinance` as a free fallback for SIX/EU listings
+that Twelve Data Free can't serve. All write into `public.candles`
+(prices) or `public.market_meta` (FX) via `store.insert_candles` /
+`store.insert_fx_rates`. News fetchers write into `portfolio.asset_news`
+via `pt.db.news.upsert_many`.
 -> Details: [data-fetchers.md](references/data-fetchers.md)
 
 ### Performance engine (`pt/performance/`)
@@ -99,9 +101,11 @@ TS frontend via OpenRouter SDK in a later phase.
 ### Live-pricing (`pt/db/prices.py`, `pt/api/routes/sync.py`)
 Holdings auto-enrich with the latest close per `(symbol, asset_type)` from
 `public.candles`. `POST /api/sync/portfolio/{id}/auto-prices` bulk-syncs
-every open holding through the right provider (CoinGecko for crypto,
-Twelve Data for stock/etf), tolerating partial failures. UI colours unrealized
-P&L green/red.
+every open holding through a provider chain — CoinGecko for crypto;
+Twelve Data primary plus Yahoo Finance fallback for stock/etf (Yahoo
+covers SIX Swiss + most EU/Asian listings via exchange-suffix tickers
+that TD Free can't serve). Tolerates partial failures, reports per-symbol
+results. UI colours unrealized P&L green/red.
 -> Details: [pricing.md](references/pricing.md)
 
 ### PDF importer (`pt/importers/pdf/`)

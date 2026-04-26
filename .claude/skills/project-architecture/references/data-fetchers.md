@@ -12,6 +12,7 @@ to the DB — fetchers themselves are pure functions, easy to test with
 |--|--|--|--|--|
 | [`coingecko.py`](../../pt/data/coingecko.py) | CoinGecko | none | OHLC candles, spot prices, coin search | ~10-30 req/min |
 | [`twelve_data.py`](../../pt/data/twelve_data.py) | Twelve Data | `TWELVE_DATA_API_KEY` | Quote, OHLCV time-series, symbol search | 800/day, 8/min |
+| [`yahoo.py`](../../pt/data/yahoo.py) | Yahoo Finance via `yfinance` | none | Daily OHLCV bars (fallback for non-US listings + TD rate-limit recovery) | soft, scrape-based |
 | [`frankfurter.py`](../../pt/data/frankfurter.py) | ECB via Frankfurter.dev | none | FX rates (latest, historical, time-series) | unlimited |
 | [`finnhub.py`](../../pt/data/finnhub.py) | Finnhub | `FINNHUB_API_KEY` | Per-stock + market news, earnings calendar | 60/min |
 | [`marketaux.py`](../../pt/data/marketaux.py) | Marketaux | `MARKETAUX_API_KEY` | Multi-asset news with built-in sentiment | 100/day |
@@ -55,7 +56,25 @@ pt sync stock AAPL --interval 1day --outputsize 365
 REST equivalents are at `/api/sync/{fx,crypto,stock}` — see
 [api.md](api.md). The bulk endpoint
 `POST /api/sync/portfolio/{id}/auto-prices` walks every open holding and
-picks the right provider per asset_type.
+picks the right provider per asset_type with a fallback chain — see
+[pricing.md](pricing.md) for the routing logic.
+
+## Provider-fallback chain pattern
+
+Stock/ETF holdings traverse a primary→secondary chain:
+
+1. **Twelve Data** primary (US listings, official, stable). On
+   `TwelveDataError` (rate limit, paywall, ambiguous symbol) → fall through.
+2. **Yahoo Finance** fallback (free, scrape-based, broad coverage of EU/UK/
+   Asian listings via exchange-suffix tickers like `NOVN.SW`, `AIR.PA`).
+
+When a known non-US symbol appears (`_YAHOO_SYMBOL_MAP` in
+[`pt/api/routes/sync.py`](../../pt/api/routes/sync.py)) the chain skips
+Twelve Data entirely so we don't burn rate-limit slots on a call we know
+will fail. The TD error message is preserved on the per-symbol outcome
+row (`outcome["twelve_data_error"]`) even when Yahoo succeeds — UI
+surfaces "got NOVN via Yahoo because TD said: needs Pro plan" rather
+than a silent provider switch.
 
 ## Tests
 
@@ -94,3 +113,14 @@ picks the right provider per asset_type.
   `httpx.HTTPStatusError` on 429 and propagate. Auto-prices in
   `routes/sync.py` already catches this and reports per-symbol; new bulk
   callers must do the same.
+- **`pt.data.yahoo` wraps `yfinance` (unofficial scraper).** Yahoo can
+  change response shape any release, so this is a fallback only — never
+  promote to primary for a symbol class without keeping a primary chain.
+  Candles persist with the **bare ticker** (`NOVN`), not the Yahoo form
+  (`NOVN.SW`), so the holdings join keyed off `(symbol, asset_type)`
+  finds rows regardless of which provider wrote them. Pass `db_symbol=`
+  to the fetcher for any non-bare lookup.
+- **Empty-history is an error, not zero rows.** `yfinance.Ticker.history()`
+  returns an empty DataFrame for delisted symbols, wrong suffix, or rate
+  limits. The wrapper raises `YahooFinanceError` so the caller sees the
+  failure instead of silently writing zero candles.

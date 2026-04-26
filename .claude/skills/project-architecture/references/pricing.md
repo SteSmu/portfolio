@@ -32,16 +32,37 @@ One round-trip per request, even with 100+ holdings.
 `POST /api/sync/portfolio/{id}/auto-prices?days=30` iterates every open
 holding and:
 
-| `asset_type` | Provider | Notes |
+| `asset_type` | Provider chain | Notes |
 |--|--|--|
 | `crypto` | CoinGecko | Symbol normalised through `_CRYPTO_ID_ALIASES` (15 entries) — falls back to lower-casing the symbol if not aliased |
-| `stock`, `etf` | Twelve Data | Requires `TWELVE_DATA_API_KEY` |
+| `stock`, `etf` | Twelve Data → Yahoo Finance | Twelve Data primary (US listings, official). On `TwelveDataError` (rate limit, paywall, ambiguous symbol) → Yahoo fallback. Known non-US tickers in `_YAHOO_SYMBOL_MAP` skip TD entirely so we don't burn rate-limit slots on calls we know will fail. |
 | `fx`, `commodity`, `bond` | — | Skipped, marked as not-auto-priced |
 
 Per-holding errors are collected in `results[]`; the call returns 200
 with `rows_written: <total>` even if some symbols fail. UI surfaces the
 failures inline so the user sees "AAPL: TWELVE_DATA_API_KEY env var not
-set" without losing the BTC/ETH success.
+set" without losing the BTC/ETH success. When the chain falls back from
+Twelve Data to Yahoo, the original TD error rides along on
+`outcome["twelve_data_error"]` so the UI can render "got NOVN via Yahoo
+because TD said: needs Pro plan" rather than a silent provider switch.
+
+### Yahoo symbol mapping
+
+`_YAHOO_SYMBOL_MAP` translates bare tickers to Yahoo Finance form for
+non-US listings:
+
+| Region | Suffix | Examples |
+|--|--|--|
+| US (Nasdaq/NYSE) | (none) | NVDA, AMZN, ORCL pass through unchanged |
+| SIX Swiss | `.SW` | NOVN, ROG, SDZ, NESN, UBSG, ZURN |
+| Euronext Paris | `.PA` | AIR, MC, BNP |
+| Xetra / Frankfurt | `.DE` | SAP, ALV, BMW |
+| London | `.L` | BP, HSBA |
+| Amsterdam | `.AS` | ASML |
+
+Long-term this should move to `assets.metadata` (`yahoo_symbol` key) so
+the asset master is authoritative. The static map is fine while the
+universe is small (single-user app).
 
 ## CLI equivalent
 

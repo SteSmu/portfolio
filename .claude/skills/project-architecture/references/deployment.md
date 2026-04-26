@@ -143,3 +143,19 @@ portfolio analytics.
 - **Volume name is hard-coded** as `pt_db_data` in the compose. If you run
   multiple instances on the same Docker host, override with
   `docker-compose -p <project>` so volumes don't collide.
+- **Docker Compose v2 may NOT auto-load `.env` on macOS.** When
+  `${VAR:-}` substitution lands in the merged compose config as an empty
+  string even though `.env` defines the var, `.env` was never read for
+  the substitution pass. Workaround: source the file into the shell
+  before invoking compose so the vars enter as real shell env:
+  ```bash
+  set -a && . .env && set +a && \
+    docker compose -f docker-compose.prod.yml up -d --force-recreate api
+  ```
+  Verify with `docker inspect pt-api --format '{{range .Config.Env}}{{println .}}{{end}}' | grep API_KEY`.
+  Symptom: API container reports `*_API_KEY env var not set` despite a
+  populated `.env` next to the compose file.
+- **`yfinance` is in `pyproject.toml` dependencies** (not extras) because
+  the auto-prices route imports it lazily for the SIX-listing fallback.
+  Image rebuilds need `docker compose ... up -d --build api` to pick up
+  pyproject changes — restart alone won't reinstall the package.

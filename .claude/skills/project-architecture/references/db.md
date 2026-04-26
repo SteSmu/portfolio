@@ -44,7 +44,7 @@ Re-running the file is safe — every statement uses `IF NOT EXISTS` /
 | [`migrate.py`](../../pt/db/migrate.py) | `apply_schema()`, `list_tables()`, `candles_has_asset_type()` |
 | [`portfolios.py`](../../pt/db/portfolios.py) | CRUD + `archive` (soft) + `delete_hard` (test cleanup only) |
 | [`transactions.py`](../../pt/db/transactions.py) | `insert`, `list_for_portfolio`, `soft_delete`, `audit_history`. `with_changed_by()` context manager sets the GUC the trigger reads |
-| [`holdings.py`](../../pt/db/holdings.py) | `list_for_portfolio` (qty + total_cost + avg_cost from tx aggregate) and `list_for_portfolio_with_prices` (same plus `current_price`, `market_value`, `unrealized_pnl`) |
+| [`holdings.py`](../../pt/db/holdings.py) | `list_for_portfolio` (qty + total_cost + avg_cost from tx aggregate) and `list_for_portfolio_with_prices` (same plus `current_price`, `market_value`, `unrealized_pnl`). `cost_delta` SQL mirrors `pt.performance.cost_basis`: `buy` and `transfer_in` add `qty*price + fees`, `sell` and `transfer_out` subtract `qty*price - fees`. The two modules MUST stay in sync — a portfolio populated solely via PDF transfer_in shows `total_cost=0` if either side drifts. |
 | [`assets.py`](../../pt/db/assets.py) | upsert / get / list / `find_similar` for asset master |
 | [`prices.py`](../../pt/db/prices.py) | `latest_close(symbol, asset_type)` and `latest_close_many(keys)` against `public.candles` |
 | [`news.py`](../../pt/db/news.py) | `upsert_many`, `list_for_symbol`, `latest_fetched_at`, `avg_sentiment` |
@@ -106,6 +106,13 @@ set the GUC inside the same transaction so the trigger picks it up.
   audit → transactions → snapshots → portfolios in that order. If you add
   a new child table referencing transactions, extend `delete_hard` so
   isolated_portfolio fixture teardown doesn't FK-fail.
+- **Holdings aggregation must mirror `cost_basis` semantics.** The SQL in
+  `holdings.list_for_portfolio` is a simplified average-cost approximation
+  but the SAME action set must contribute to `qty_delta` AND `cost_delta`.
+  If a new action type is added to `cost_basis.py` (e.g. share lending,
+  fractional shares from spinoffs), update the SQL `CASE` in `holdings.py`
+  in the same commit — otherwise downstream stat-cards report `0 €`.
+  Regression-guard tests in `test_db_holdings.py` pin the invariants.
 
 ## Schema migration in CI
 
