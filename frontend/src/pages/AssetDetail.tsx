@@ -14,6 +14,7 @@ export default function AssetDetail() {
   const qc = useQueryClient()
 
   const [period, setPeriod] = useState<Period>('1Y')
+  const [showNews, setShowNews] = useState(false)
   const start = useMemo(() => periodStart(period), [period])
 
   const holding = useQuery({
@@ -97,7 +98,27 @@ export default function AssetDetail() {
             </span>
           )}
         </div>
-        <PeriodSelector value={period} onChange={setPeriod} />
+        <div className="flex items-center gap-3 flex-wrap">
+          <label
+            className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+            style={{ color: 'var(--text-secondary)' }}
+            title="Plot one dot per news item, tinted by sentiment. Click a dot to open the article."
+          >
+            <input
+              type="checkbox"
+              className="accent-current"
+              checked={showNews}
+              onChange={e => setShowNews(e.target.checked)}
+            />
+            Show news
+            {news.data && news.data.items.length > 0 && (
+              <span style={{ color: 'var(--text-tertiary)' }}>
+                ({news.data.items.length})
+              </span>
+            )}
+          </label>
+          <PeriodSelector value={period} onChange={setPeriod} />
+        </div>
       </div>
 
       {/* Price chart */}
@@ -122,6 +143,8 @@ export default function AssetDetail() {
             transactions={transactions.data ?? []}
             avgCost={avgCost}
             height={380}
+            news={news.data?.items ?? []}
+            showNews={showNews}
           />
         )}
       </section>
