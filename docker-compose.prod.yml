@@ -107,6 +107,10 @@ services:
       FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
       MARKETAUX_API_KEY: ${MARKETAUX_API_KEY:-}
       PT_CRON_HOUR_UTC: ${PT_CRON_HOUR_UTC:-6}
+    # The base image carries the API HEALTHCHECK; the cron sidecar doesn't
+    # serve HTTP, so disable it to avoid a permanent "unhealthy" status.
+    healthcheck:
+      disable: true
     entrypoint: ["/bin/sh", "-c"]
     # `$$` escapes a literal $ for docker-compose (so the runtime shell sees
     # `$VAR`, not the compose-time value). The hour read happens in the
