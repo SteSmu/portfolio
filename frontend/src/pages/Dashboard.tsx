@@ -60,14 +60,22 @@ export default function Dashboard() {
   }, [snaps.data, start])
   const benchmarkOverlay = useBenchmarkOverlay(benchmarkSel, visibleSnaps)
 
-  const totalValue = latest ? Number(latest.total_value) : null
+  // Prefer FX-converted total_value_base when available; fall back to FX-naive
+  // total_value with a "mixed currencies" caveat. The snapshot job emits
+  // total_value_base = null when at least one currency bucket has no rate path
+  // for that day — surfacing the caveat reminds the user to run `pt sync fx`.
+  const baseCcy = (latest?.metadata?.base_currency as string | undefined) ?? 'EUR'
+  const baseAvailable = latest?.total_value_base != null
+  const totalValue = latest
+    ? Number(baseAvailable ? latest.total_value_base : latest.total_value)
+    : null
   const costBasis  = latest ? Number(latest.total_cost_basis) : null
   const unrealized = latest ? Number(latest.unrealized_pnl) : null
   const realized   = summary.data ? Number(summary.data.realized_pnl) : null
 
-  const dlt1 = deltaPct(snaps.data?.snapshots ?? [], 1)
-  const dlt7 = deltaPct(snaps.data?.snapshots ?? [], 7)
-  const dlt365 = deltaPct(snaps.data?.snapshots ?? [], 365)
+  const dlt1 = deltaPct(snaps.data?.snapshots ?? [], 1, baseAvailable)
+  const dlt7 = deltaPct(snaps.data?.snapshots ?? [], 7, baseAvailable)
+  const dlt365 = deltaPct(snaps.data?.snapshots ?? [], 365, baseAvailable)
 
   return (
     <div className="space-y-6">
@@ -81,10 +89,13 @@ export default function Dashboard() {
       {/* Hero — primary KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard
-          label="Portfolio value"
+          label={baseAvailable ? `Portfolio value (${baseCcy})` : 'Portfolio value (mixed)'}
           primary={totalValue != null ? fmtMoney(totalValue) : '—'}
           deltas={latest ? [['1d', dlt1], ['7d', dlt7], ['1Y', dlt365]] : []}
           loading={snaps.isLoading}
+          caveat={!baseAvailable && latest != null
+            ? 'mixed currencies — run `pt sync fx`'
+            : undefined}
         />
         <KpiCard
           label="Cost basis"
@@ -157,7 +168,11 @@ function tone(v: number | null | undefined): 'gain' | 'loss' | undefined {
   return undefined
 }
 
-function deltaPct(snaps: { date: string; total_value: string }[], lookbackDays: number): number | null {
+function deltaPct(
+  snaps: { date: string; total_value: string; total_value_base: string | null }[],
+  lookbackDays: number,
+  preferBase = false,
+): number | null {
   if (snaps.length < 2) return null
   const last = snaps[snaps.length - 1]
   // Find a snapshot at-or-before (last.date - lookbackDays).
@@ -168,20 +183,26 @@ function deltaPct(snaps: { date: string; total_value: string }[], lookbackDays: 
   for (let i = snaps.length - 1; i >= 0; i--) {
     if (snaps[i].date <= targetIso) { baseline = snaps[i]; break }
   }
-  const a = Number(baseline.total_value)
-  const b = Number(last.total_value)
+  // Use FX-converted values when both endpoints have them (apples-to-apples
+  // across the lookback window). Otherwise fall back to FX-naive.
+  const useBase = preferBase
+                  && baseline.total_value_base != null
+                  && last.total_value_base != null
+  const a = Number(useBase ? baseline.total_value_base : baseline.total_value)
+  const b = Number(useBase ? last.total_value_base : last.total_value)
   if (a <= 0) return null
   return (b - a) / a
 }
 
 function KpiCard({
-  label, primary, deltas, tone, loading,
+  label, primary, deltas, tone, loading, caveat,
 }: {
   label: string
   primary: string
   deltas?: [string, number | null][]
   tone?: 'gain' | 'loss'
   loading?: boolean
+  caveat?: string
 }) {
   return (
     <div className="card">
@@ -196,6 +217,11 @@ function KpiCard({
           style={{ color: tone ? `var(--${tone})` : 'var(--text-primary)' }}
         >
           {primary}
+        </div>
+      )}
+      {caveat && !loading && (
+        <div className="text-[11px] mt-1" style={{ color: 'var(--loss)' }} title={caveat}>
+          ⚠ {caveat}
         </div>
       )}
       {deltas && deltas.length > 0 && !loading && (
