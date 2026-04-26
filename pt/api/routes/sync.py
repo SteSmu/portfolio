@@ -17,6 +17,7 @@ from pt.data import coingecko as _cg
 from pt.data import frankfurter as _fx
 from pt.data import store as _store
 from pt.data import twelve_data as _td
+from pt.data import yahoo as _yh
 from pt.db import holdings as _holdings
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -114,6 +115,74 @@ def _coingecko_id(symbol: str) -> str:
     return sym.lower()
 
 
+# Bare-ticker → Yahoo Finance form. Used when Twelve Data can't serve a symbol
+# (SIX Swiss listings need Pro plan, etc.). Yahoo accepts bare US tickers
+# directly, so only non-US listings need an entry. Long-term this should move
+# to `assets.metadata` so it's editable per asset, but a static map is fine
+# while the universe is small.
+_YAHOO_SYMBOL_MAP: dict[str, str] = {
+    # SIX Swiss
+    "NOVN": "NOVN.SW",
+    "ROG":  "ROG.SW",
+    "SDZ":  "SDZ.SW",
+    "NESN": "NESN.SW",
+    "UBSG": "UBSG.SW",
+    "ZURN": "ZURN.SW",
+    # Euronext Paris (Twelve Data Free covers these too, listed for fallback symmetry)
+    "AIR":  "AIR.PA",
+    "MC":   "MC.PA",
+    "BNP":  "BNP.PA",
+    # Xetra / Frankfurt
+    "SAP":  "SAP.DE",
+    "ALV":  "ALV.DE",
+    "BMW":  "BMW.DE",
+    # London
+    "BP":   "BP.L",
+    "HSBA": "HSBA.L",
+    # Amsterdam
+    "ASML": "ASML.AS",
+}
+
+
+def _yahoo_symbol(symbol: str) -> str:
+    """Bare ticker → Yahoo form. US tickers pass through unchanged."""
+    sym = symbol.upper()
+    return _YAHOO_SYMBOL_MAP.get(sym, sym)
+
+
+def _fetch_stock_with_fallback(
+    symbol: str, *, days: int, asset_type: str,
+) -> tuple[list[dict], str, str | None]:
+    """Try Twelve Data first; on TwelveDataError, fall back to Yahoo Finance.
+
+    Returns (candles, source, td_error_msg). The TD error is preserved on the
+    outcome row even when Yahoo succeeds — useful for the UI to surface
+    "got NOVN via Yahoo because TD said: needs Pro plan".
+    """
+    # If we already know TD can't serve this symbol (e.g. SIX listing), skip
+    # the failed call to avoid burning a rate-limit slot.
+    if symbol.upper() in _YAHOO_SYMBOL_MAP and _YAHOO_SYMBOL_MAP[symbol.upper()] != symbol.upper():
+        candles = _yh.fetch_time_series(
+            _yahoo_symbol(symbol), days=days, asset_type=asset_type,
+            db_symbol=symbol,
+        )
+        return candles, "yahoo", None
+
+    try:
+        candles = _td.fetch_time_series(
+            symbol, interval="1day", outputsize=days, asset_type=asset_type,
+        )
+        return candles, "twelve_data", None
+    except _td.TwelveDataError as td_err:
+        # TD couldn't serve — try Yahoo. Surface the TD error on the outcome
+        # so users still see why we needed the fallback.
+        candles = _yh.fetch_time_series(
+            _yahoo_symbol(symbol), days=days, asset_type=asset_type,
+            db_symbol=symbol,
+        )
+        return candles, "yahoo", str(td_err)
+
+
 @router.post("/portfolio/{portfolio_id}/auto-prices")
 def sync_portfolio_prices(
     portfolio_id: int,
@@ -124,8 +193,14 @@ def sync_portfolio_prices(
 
     Per asset_type:
       - crypto → CoinGecko (no key needed)
-      - stock / etf → Twelve Data (key required)
+      - stock / etf → Twelve Data (key required) → Yahoo Finance fallback
       - fx / commodity / bond → skipped for now
+
+    Twelve Data is the primary stock source (official, stable). When it can't
+    serve a symbol — SIX Swiss listings need a Pro plan, rate-limit hits the
+    8/min Free Tier ceiling, etc. — we transparently retry via Yahoo Finance,
+    which is free + scrapes Yahoo's internal endpoints. The candle stays
+    keyed off the bare ticker so the holdings join works regardless of source.
 
     Errors per holding don't fail the call — every result is reported. UI shows
     the breakdown so users see exactly which provider failed for which symbol.
@@ -144,11 +219,12 @@ def sync_portfolio_prices(
                 outcome["source"] = "coingecko"
                 outcome["coingecko_id"] = coin_id
             elif asset_type in {"stock", "etf"}:
-                candles = _td.fetch_time_series(
-                    symbol, interval="1day", outputsize=days,
-                    asset_type=asset_type,
+                candles, src, td_err = _fetch_stock_with_fallback(
+                    symbol, days=days, asset_type=asset_type,
                 )
-                outcome["source"] = "twelve_data"
+                outcome["source"] = src
+                if td_err:
+                    outcome["twelve_data_error"] = td_err
             else:
                 outcome["error"] = f"asset_type {asset_type!r} not auto-priced yet"
                 results.append(outcome)
@@ -161,6 +237,8 @@ def sync_portfolio_prices(
             total_written += n
         except _td.TwelveDataError as e:
             outcome["error"] = str(e)
+        except _yh.YahooFinanceError as e:
+            outcome["error"] = f"yahoo: {e}"
         except httpx.HTTPError as e:
             outcome["error"] = f"HTTP error: {e}"
         except Exception as e:  # pragma: no cover — unexpected fetcher failures
