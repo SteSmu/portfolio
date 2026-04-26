@@ -17,7 +17,7 @@ export default function PortfolioPicker() {
   }, [activeId, portfolios, setActive])
 
   if (!portfolios || portfolios.length === 0) {
-    return <span className="text-xs text-zinc-500">no portfolio</span>
+    return <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>no portfolio</span>
   }
 
   return (

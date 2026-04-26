@@ -1,37 +1,169 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
 @layer base {
-  :root {
+  :root,
+  :root[data-theme="dark"] {
     color-scheme: dark;
+
+    --bg-base: #09090b;        /* zinc-950 */
+    --bg-elev: #18181b;        /* zinc-900 */
+    --bg-elev-hi: #27272a;     /* zinc-800 */
+    --bg-elev-hover: #3f3f46;  /* zinc-700 */
+    --border-base: #27272a;    /* zinc-800 */
+    --border-strong: #3f3f46;  /* zinc-700 */
+
+    --text-primary: #f4f4f5;   /* zinc-100 */
+    --text-secondary: #a1a1aa; /* zinc-400 */
+    --text-tertiary: #71717a;  /* zinc-500 */
+
+    --gain: #34d399;           /* emerald-400 */
+    --gain-soft: rgba(16, 185, 129, 0.18);
+    --loss: #fb7185;           /* rose-400 */
+    --loss-soft: rgba(244, 63, 94, 0.18);
+    --flat: #a1a1aa;           /* zinc-400 */
+
+    --accent: #3b82f6;         /* blue-500 */
+    --accent-hover: #60a5fa;   /* blue-400 */
+    --accent-soft: rgba(59, 130, 246, 0.20);
+    --danger: #be123c;         /* rose-700 */
+    --danger-hover: #e11d48;   /* rose-600 */
+
+    --chart-grid: #27272a;     /* zinc-800 */
+    --chart-axis: #71717a;     /* zinc-500 */
+    --chart-tooltip-bg: #09090b;
+    --chart-tooltip-border: #3f3f46;
+
+    /* categorical palette for allocation/treemap (5-step, color-blind friendly) */
+    --cat-1: #60a5fa;          /* blue-400 */
+    --cat-2: #34d399;          /* emerald-400 */
+    --cat-3: #fbbf24;          /* amber-400 */
+    --cat-4: #f472b6;          /* pink-400 */
+    --cat-5: #a78bfa;          /* violet-400 */
+    --cat-6: #fb923c;          /* orange-400 */
+    --cat-7: #22d3ee;          /* cyan-400 */
+    --cat-8: #c084fc;          /* purple-400 */
   }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --bg-base: #fafafa;        /* zinc-50 */
+    --bg-elev: #ffffff;
+    --bg-elev-hi: #f4f4f5;     /* zinc-100 */
+    --bg-elev-hover: #e4e4e7;  /* zinc-200 */
+    --border-base: #e4e4e7;    /* zinc-200 */
+    --border-strong: #d4d4d8;  /* zinc-300 */
+
+    --text-primary: #18181b;   /* zinc-900 */
+    --text-secondary: #52525b; /* zinc-600 */
+    --text-tertiary: #71717a;  /* zinc-500 */
+
+    --gain: #059669;           /* emerald-600 */
+    --gain-soft: rgba(16, 185, 129, 0.14);
+    --loss: #e11d48;           /* rose-600 */
+    --loss-soft: rgba(225, 29, 72, 0.12);
+    --flat: #71717a;           /* zinc-500 */
+
+    --accent: #2563eb;         /* blue-600 */
+    --accent-hover: #3b82f6;   /* blue-500 */
+    --accent-soft: rgba(37, 99, 235, 0.14);
+    --danger: #dc2626;         /* red-600 */
+    --danger-hover: #ef4444;   /* red-500 */
+
+    --chart-grid: #e4e4e7;     /* zinc-200 */
+    --chart-axis: #71717a;
+    --chart-tooltip-bg: #ffffff;
+    --chart-tooltip-border: #d4d4d8;
+
+    --cat-1: #2563eb;
+    --cat-2: #059669;
+    --cat-3: #d97706;
+    --cat-4: #db2777;
+    --cat-5: #7c3aed;
+    --cat-6: #ea580c;
+    --cat-7: #0891b2;
+    --cat-8: #9333ea;
+  }
+
   body {
-    @apply bg-zinc-950 text-zinc-100 font-sans antialiased;
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    @apply font-sans antialiased;
+  }
+
+  ::selection {
+    background-color: var(--accent-soft);
   }
 }
 
 @layer components {
   .card {
-    @apply bg-zinc-900 border border-zinc-800 rounded-lg p-4;
+    background-color: var(--bg-elev);
+    border: 1px solid var(--border-base);
+    @apply rounded-lg p-4;
   }
-  .gain { @apply text-emerald-400; }
-  .loss { @apply text-rose-400; }
-  .flat { @apply text-zinc-400; }
+  .card-elev {
+    background-color: var(--bg-elev-hi);
+    border: 1px solid var(--border-base);
+    @apply rounded-lg p-4;
+  }
+  .gain { color: var(--gain); }
+  .loss { color: var(--loss); }
+  .flat { color: var(--flat); }
+  .badge-gain {
+    background-color: var(--gain-soft);
+    color: var(--gain);
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium;
+  }
+  .badge-loss {
+    background-color: var(--loss-soft);
+    color: var(--loss);
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium;
+  }
   .input {
-    @apply bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm
-           focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500;
+    background-color: var(--bg-elev-hi);
+    border: 1px solid var(--border-strong);
+    color: var(--text-primary);
+    @apply rounded px-3 py-1.5 text-sm
+           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:border-[var(--accent)];
   }
+  .input::placeholder { color: var(--text-tertiary); }
   /* Tailwind v4 forbids @apply on self-defined classes — inline the utilities
      in each variant rather than referencing a base `.btn` class. */
   .btn-primary {
-    @apply rounded px-3 py-1.5 text-sm font-medium transition-colors
-           bg-blue-600 hover:bg-blue-500 text-white;
+    background-color: var(--accent);
+    color: #ffffff;
+    @apply rounded px-3 py-1.5 text-sm font-medium transition-colors;
   }
+  .btn-primary:hover { background-color: var(--accent-hover); }
   .btn-ghost {
-    @apply rounded px-3 py-1.5 text-sm font-medium transition-colors
-           bg-zinc-800 hover:bg-zinc-700 text-zinc-200;
+    background-color: var(--bg-elev-hi);
+    color: var(--text-primary);
+    @apply rounded px-3 py-1.5 text-sm font-medium transition-colors;
   }
+  .btn-ghost:hover { background-color: var(--bg-elev-hover); }
   .btn-danger {
-    @apply rounded px-3 py-1.5 text-sm font-medium transition-colors
-           bg-rose-700 hover:bg-rose-600 text-white;
+    background-color: var(--danger);
+    color: #ffffff;
+    @apply rounded px-3 py-1.5 text-sm font-medium transition-colors;
+  }
+  .btn-danger:hover { background-color: var(--danger-hover); }
+
+  /* Generic skeleton — used by loading states */
+  .skeleton {
+    background: linear-gradient(90deg,
+      var(--bg-elev-hi) 0%,
+      var(--bg-elev-hover) 50%,
+      var(--bg-elev-hi) 100%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.4s ease-in-out infinite;
+    @apply rounded;
+  }
+  @keyframes skeleton-pulse {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 }

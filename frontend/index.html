@@ -1,11 +1,26 @@
 <!doctype html>
-<html lang="de" class="dark">
+<html lang="de" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Portfolio Tracker</title>
+    <script>
+      // Apply saved theme before first paint to avoid a flash. The theme hook
+      // will take over once React mounts.
+      (function () {
+        try {
+          var pref = localStorage.getItem('pt:theme') || 'system';
+          var resolved = pref === 'system'
+            ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+            : pref;
+          document.documentElement.dataset.theme = resolved;
+        } catch (e) {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
   </head>
-  <body class="bg-zinc-950 text-zinc-100">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

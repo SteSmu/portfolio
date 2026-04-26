@@ -139,7 +139,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; db: string; version: string }>('/health'),
+  health: () => request<{
+    status: 'ok' | 'degraded'
+    version: string
+    now: string
+    db: { status: 'ok' | 'unavailable'; latency_ms: number }
+    counts: {
+      portfolios: number | null
+      transactions: number | null
+      candles: number | null
+      news: number | null
+      insights: number | null
+    }
+  }>('/health'),
 
   // Portfolios
   listPortfolios: (includeArchived = false) =>

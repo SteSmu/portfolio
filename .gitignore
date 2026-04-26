@@ -55,3 +55,6 @@ sample_pdfs/
 # DB dumps (might contain PII)
 *.sql.dump
 *.backup
+
+# Hook state
+.claude/.arch-loaded
