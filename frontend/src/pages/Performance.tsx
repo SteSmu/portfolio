@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
-import { fmtDate, fmtMoney, pnlClass } from '../lib/format'
+import { fmtDate, fmtMoney, fmtPrice, fmtQty, pnlClass } from '../lib/format'
 import EmptyPortfolio from '../components/EmptyPortfolio'
 
 const METHODS = ['fifo', 'lifo', 'average'] as const
@@ -101,8 +101,8 @@ export default function Performance() {
                   <td className="py-2 text-zinc-500">#{l.transaction_id}</td>
                   <td className="font-medium">{l.symbol}</td>
                   <td className="text-zinc-400">{fmtDate(l.executed_at)}</td>
-                  <td className="text-right tabular-nums">{l.quantity}</td>
-                  <td className="text-right tabular-nums">{fmtMoney(l.price, '', 4)}</td>
+                  <td className="text-right tabular-nums">{fmtQty(l.quantity)}</td>
+                  <td className="text-right tabular-nums">{fmtPrice(l.price)}</td>
                   <td className="text-right tabular-nums">{fmtMoney(l.cost_basis)}</td>
                   <td className="text-right text-zinc-400">{l.currency}</td>
                 </tr>
@@ -135,7 +135,7 @@ export default function Performance() {
                     #{m.sell_transaction_id}→#{m.lot_transaction_id}
                   </td>
                   <td className="font-medium">{m.symbol}</td>
-                  <td className="text-right tabular-nums">{m.sold_quantity}</td>
+                  <td className="text-right tabular-nums">{fmtQty(m.sold_quantity)}</td>
                   <td className="text-right tabular-nums">{fmtMoney(m.cost)}</td>
                   <td className="text-right tabular-nums">{fmtMoney(m.proceeds)}</td>
                   <td className={`text-right tabular-nums font-medium ${pnlClass(m.realized_pnl)}`}>

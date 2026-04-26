@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
-import { fmtMoney, pnlClass } from '../lib/format'
+import { fmtMoney, fmtPrice, fmtQty, pnlClass } from '../lib/format'
 import EmptyPortfolio from '../components/EmptyPortfolio'
 
 export default function Dashboard() {
@@ -75,8 +75,8 @@ export default function Dashboard() {
                   <tr key={`${h.symbol}-${h.asset_type}`} className="border-b border-zinc-900">
                     <td className="py-1.5 font-medium">{h.symbol}</td>
                     <td className="text-zinc-400">{h.asset_type}</td>
-                    <td className="text-right">{h.quantity}</td>
-                    <td className="text-right">{fmtMoney(h.avg_cost, '', 4)}</td>
+                    <td className="text-right tabular-nums">{fmtQty(h.quantity)}</td>
+                    <td className="text-right tabular-nums">{fmtPrice(h.avg_cost)}</td>
                     <td className="text-right">{fmtMoney(h.total_cost)}</td>
                     <td className="text-right text-zinc-400">{h.currency}</td>
                   </tr>

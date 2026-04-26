@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
-import { fmtDate, fmtMoney, fmtQty } from '../lib/format'
+import { fmtDate, fmtMoney, fmtPrice, fmtQty } from '../lib/format'
 import EmptyPortfolio from '../components/EmptyPortfolio'
 
 const ACTIONS = ['buy', 'sell', 'dividend', 'transfer_in', 'transfer_out',
@@ -72,8 +72,8 @@ export default function Transactions() {
                   </td>
                   <td className="font-medium">{t.symbol}</td>
                   <td className="text-zinc-400">{t.asset_type}</td>
-                  <td className="text-right tabular-nums">{fmtQty(t.quantity, 8)}</td>
-                  <td className="text-right tabular-nums">{fmtMoney(t.price, '', 4)}</td>
+                  <td className="text-right tabular-nums">{fmtQty(t.quantity)}</td>
+                  <td className="text-right tabular-nums">{fmtPrice(t.price)}</td>
                   <td className="text-right text-zinc-400">{t.trade_currency}</td>
                   <td className="text-right tabular-nums text-zinc-400">{fmtMoney(t.fees)}</td>
                   <td className="text-right">
