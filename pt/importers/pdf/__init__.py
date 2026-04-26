@@ -59,8 +59,14 @@ def to_transactions(stmt: ParsedStatement) -> list[dict]:
         executed_at = datetime.combine(
             h.entry_date, time(0, 0), tzinfo=timezone.utc,
         )
+        # Symbol priority: bare ticker (Twelve-Data-friendly) > ISIN > name.
+        # `source_doc_id` keeps the ISIN when available so re-imports stay
+        # idempotent even if the Bloomberg line was previously OCR-damaged
+        # and we fell back to the name on the first run.
+        symbol = h.symbol.upper()
+        doc_id_key = (h.isin or h.name).upper()
         rows.append({
-            "symbol": (h.isin or h.name).upper(),
+            "symbol": symbol,
             "asset_type": h.asset_type,
             "action": "transfer_in",
             "executed_at": executed_at,
@@ -72,7 +78,7 @@ def to_transactions(stmt: ParsedStatement) -> list[dict]:
             "fx_rate": None,
             "note": _build_note(stmt, h),
             "source": f"pdf:{stmt.parser}",
-            "source_doc_id": f"{stmt.file_hash[:16]}:{(h.isin or h.name).upper()}",
+            "source_doc_id": f"{stmt.file_hash[:16]}:{doc_id_key}",
         })
     return rows
 
@@ -84,6 +90,10 @@ def _build_note(stmt: ParsedStatement, h: ParsedHolding) -> str:
     ]
     if h.name:
         bits.append(f"name={h.name!r}")
+    if h.bloomberg_ticker:
+        bits.append(f"bloomberg={h.bloomberg_ticker!r}")
+    if h.isin:
+        bits.append(f"isin={h.isin}")
     return " ".join(bits)
 
 

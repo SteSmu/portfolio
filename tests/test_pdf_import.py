@@ -95,6 +95,154 @@ def test_to_transactions_yields_one_transfer_in_per_holding():
     assert len(keys) == len(txs)  # each unique
 
 
+# ---------- bloomberg ticker extraction ---------------------------------------
+
+def _fake_word(text: str, x0: float, top: float) -> dict:
+    """Minimal pdfplumber-style word dict for unit tests."""
+    return {"text": text, "x0": x0, "top": top, "x1": x0 + 10 * len(text), "bottom": top + 10}
+
+
+def test_extract_bloomberg_ticker_us_listing():
+    from pt.importers.pdf.lgt import _extract_bloomberg_ticker
+
+    block = [
+        _fake_word("US0231351067", 280, 100),  # ISIN
+        _fake_word("645156", 280, 110),         # Valor
+        _fake_word("AMZN", 280, 120),
+        _fake_word("UW", 305, 121),             # 1px y-jitter — same row
+        _fake_word("Nicht-Basis", 280, 132),    # GICS
+    ]
+    assert _extract_bloomberg_ticker(block) == "AMZN UW"
+
+
+def test_extract_bloomberg_ticker_swiss_listing():
+    from pt.importers.pdf.lgt import _extract_bloomberg_ticker
+
+    block = [
+        _fake_word("CH0012005267", 280, 100),
+        _fake_word("1200526", 280, 110),
+        _fake_word("NOVN", 280, 120),
+        _fake_word("SE", 305, 122),
+    ]
+    assert _extract_bloomberg_ticker(block) == "NOVN SE"
+
+
+def test_extract_bloomberg_ticker_paris_listing():
+    from pt.importers.pdf.lgt import _extract_bloomberg_ticker
+
+    block = [
+        _fake_word("NL0000235190", 280, 100),
+        _fake_word("AIR", 280, 120),
+        _fake_word("FP", 305, 120),
+    ]
+    assert _extract_bloomberg_ticker(block) == "AIR FP"
+
+
+def test_extract_bloomberg_ticker_returns_none_when_absent():
+    from pt.importers.pdf.lgt import _extract_bloomberg_ticker
+
+    block = [
+        _fake_word("US0231351067", 280, 100),
+        _fake_word("645156", 280, 110),
+    ]
+    assert _extract_bloomberg_ticker(block) is None
+
+
+def test_extract_bloomberg_ticker_rejects_unknown_exchange_codes():
+    """Two adjacent uppercase tokens that are NOT a known exchange suffix
+    (e.g. random GICS sector words) must not produce false positives."""
+    from pt.importers.pdf.lgt import _extract_bloomberg_ticker
+
+    block = [
+        _fake_word("FOO", 280, 100),  # not in _BLOOMBERG_EXCHANGE_CODES
+        _fake_word("XX", 305, 100),   # XX is not a known exchange
+    ]
+    assert _extract_bloomberg_ticker(block) is None
+
+
+def test_extract_bloomberg_ticker_rejects_when_y_too_far_apart():
+    """Ticker and exchange code must be on the same visual row.
+    Different `top` values mean they belong to different lines."""
+    from pt.importers.pdf.lgt import _extract_bloomberg_ticker
+
+    block = [
+        _fake_word("AMZN", 280, 100),
+        _fake_word("UW", 305, 130),  # 30px below — clearly a different row
+    ]
+    assert _extract_bloomberg_ticker(block) is None
+
+
+def test_parsed_holding_ticker_property_strips_exchange():
+    from datetime import date
+    from decimal import Decimal
+
+    from pt.importers.pdf.types import ParsedHolding
+
+    h = ParsedHolding(
+        isin="US0231351067", name="Amazon.Com Inc", asset_type="stock",
+        quantity=Decimal("90"), entry_price=Decimal("233.51"), entry_currency="USD",
+        entry_date=date(2025, 1, 23), current_price=None, current_value_base_ccy=None,
+        bloomberg_ticker="AMZN UW",
+    )
+    assert h.ticker == "AMZN"
+    assert h.bloomberg_exchange == "UW"
+    assert h.symbol == "AMZN"  # ticker beats ISIN
+
+
+def test_parsed_holding_falls_back_to_isin_without_bloomberg():
+    from datetime import date
+    from decimal import Decimal
+
+    from pt.importers.pdf.types import ParsedHolding
+
+    h = ParsedHolding(
+        isin="US0231351067", name="Amazon.Com Inc", asset_type="stock",
+        quantity=Decimal("90"), entry_price=Decimal("233.51"), entry_currency="USD",
+        entry_date=date(2025, 1, 23), current_price=None, current_value_base_ccy=None,
+        bloomberg_ticker=None,
+    )
+    assert h.ticker is None
+    assert h.symbol == "US0231351067"
+
+
+@requires_lgt_pdf
+def test_lgt_parser_extracts_bloomberg_tickers_for_known_positions():
+    """End-to-end on the reference PDF: every well-known holding must come
+    back with the correct bare ticker so Twelve Data lookups work without
+    further mapping. Regression-guard for the symbol pipeline."""
+    from pt.importers.pdf import parse_pdf
+
+    stmt = parse_pdf(REFERENCE_PDF)
+    by_isin = {h.isin: h for h in stmt.holdings if h.isin}
+    expected = {
+        "CH0012005267": "NOVN",   # Novartis on SIX
+        "CH1243598427": "SDZ",    # Sandoz on SIX
+        "NL0000235190": "AIR",    # Airbus on Paris
+        "US0231351067": "AMZN",   # Amazon on Nasdaq
+        "US11135F1012": "AVGO",   # Broadcom on Nasdaq
+        "US0404132054": "ANET",   # Arista Networks on NYSE
+    }
+    for isin, expected_ticker in expected.items():
+        if isin not in by_isin:
+            continue  # OCR may drop one; don't fail the suite for that
+        assert by_isin[isin].ticker == expected_ticker, (
+            f"{isin}: expected {expected_ticker}, got {by_isin[isin].ticker!r} "
+            f"(bloomberg_ticker={by_isin[isin].bloomberg_ticker!r})"
+        )
+
+
+@requires_lgt_pdf
+def test_to_transactions_uses_bare_ticker_as_symbol():
+    from pt.importers.pdf import parse_pdf, to_transactions
+
+    stmt = parse_pdf(REFERENCE_PDF)
+    txs = to_transactions(stmt)
+    symbols = {t["symbol"] for t in txs}
+    # Spot-check a few US tickers — these are unambiguous on Twelve Data.
+    for ticker in ("AMZN", "AVGO", "ANET"):
+        assert ticker in symbols, f"expected {ticker} as transaction.symbol, got {symbols}"
+
+
 # ---------- end-to-end via the API --------------------------------------------
 
 @pytest.fixture

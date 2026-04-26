@@ -69,6 +69,35 @@ _INT_RE = re.compile(r"^\d{1,5}$")
 _NUM_TOKEN_RE = re.compile(r"^-?\d{1,3}(?:['\s]?\d{3})*(?:\.\d+)?$")
 _PERCENT_HINT = ("%", "o/o", "0Ä", "Yo", "Vo")
 
+# Bloomberg-style 2-letter exchange suffixes seen on LGT statements.
+# Note: LGT uses 'SE' for SIX Swiss Exchange (Sandoz, Novartis, Roche), not the
+# vanilla-Bloomberg meaning of 'Stockholm'. We just need to recognise the suffix
+# to pair it with a preceding ticker — downstream code uses only the bare ticker.
+_BLOOMBERG_EXCHANGE_CODES = frozenset({
+    # United States
+    "UW", "UN", "UQ", "UF", "UA", "UP", "UR", "US", "UV",
+    # Europe
+    "FP",                # Euronext Paris
+    "GR", "GY",          # Xetra / Frankfurt
+    "SE", "SW", "VX",    # SIX Swiss / Stockholm
+    "LN",                # London
+    "NA",                # Euronext Amsterdam
+    "BB",                # Madrid / Berlin
+    "IM",                # Borsa Italiana
+    "AV",                # Wiener Borse
+    "SS",                # OMX Stockholm
+    # Asia-Pacific
+    "JT", "JP",          # Tokyo
+    "HK",                # Hong Kong
+    "AU",                # ASX
+    "SP",                # Singapore
+    "KS",                # Korea
+})
+
+# x-bounds of the ISIN/Bloomberg/GICS column on LGT statements.
+COL_BLBG_MIN_X = 270
+COL_BLBG_MAX_X = 450
+
 
 # ---------- public API ---------------------------------------------------------
 
@@ -253,6 +282,7 @@ def _parse_holding_block(rows, anchor_idx: int, warnings: list[str]) -> ParsedHo
     market_value = _extract_market_value(block_words, qty, entry_price, current_price)
     name = _extract_name(block_words, qty, currency, isin)
     asset_type = _guess_asset_type(block_text)
+    bloomberg = _extract_bloomberg_ticker(block_words)
 
     if entry_price is None:
         warnings.append(f"missing entry price: {name} ({isin})")
@@ -267,6 +297,7 @@ def _parse_holding_block(rows, anchor_idx: int, warnings: list[str]) -> ParsedHo
         entry_date=entry_date,
         current_price=current_price,
         current_value_base_ccy=market_value,
+        bloomberg_ticker=bloomberg,
         metadata={
             "raw": block_text[:400],
             "current_date": current_date.isoformat() if current_date else None,
@@ -415,6 +446,45 @@ def _extract_name(block, qty: Decimal, currency: str, isin: str | None) -> str:
     first_line = [w for w in name_zone if abs(w["top"] - top_y) < 5]
     first_line.sort(key=lambda w: w["x0"])
     return " ".join(w["text"] for w in first_line).strip() or "?"
+
+
+def _extract_bloomberg_ticker(block) -> str | None:
+    """Find the Bloomberg ticker in the ISIN/Valor/Bloomberg/GICS column.
+
+    The Bloomberg line sits below the ISIN+Valor numbers in the same x-band,
+    e.g. for Amazon::
+
+        US0231351067   <- ISIN
+        645156         <- Valor (ignored — usually pure digits)
+        AMZN UW        <- Bloomberg ticker  ← what we want
+        Nicht-Basis... <- GICS sector
+
+    Pattern: an alpha-only token (1-6 chars, uppercase) immediately followed
+    by a known 2-letter exchange code on the same row (within ~4px of `top`).
+
+    Returns the joined ticker like 'AMZN UW' or None when no match. The bare
+    ticker is exposed via `ParsedHolding.ticker`; downstream `transactions.symbol`
+    uses that as the preferred identifier.
+    """
+    isin_col = [w for w in block if COL_BLBG_MIN_X <= w["x0"] <= COL_BLBG_MAX_X]
+    isin_col.sort(key=lambda w: (w["top"], w["x0"]))
+    for i in range(len(isin_col) - 1):
+        a, b = isin_col[i], isin_col[i + 1]
+        if abs(a["top"] - b["top"]) > 4:
+            continue
+        # OCR sometimes lowercases the leading letter (`sDZ` instead of `SDZ`,
+        # same pathology as `cH...` for ISINs). Up-case after token-grab and
+        # validate only that it is alpha-only of plausible ticker length.
+        head = a["text"].upper()
+        tail = b["text"].upper()
+        if not (1 <= len(head) <= 6 and head.isalpha()):
+            continue
+        if not (len(tail) == 2 and tail.isalpha()):
+            continue
+        if tail not in _BLOOMBERG_EXCHANGE_CODES:
+            continue
+        return f"{head} {tail}"
+    return None
 
 
 def _guess_asset_type(text: str) -> str:
