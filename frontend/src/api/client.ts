@@ -74,6 +74,65 @@ export type PerformanceSummary = {
   open_cost_basis: string
   realized_pnl: string
   match_count: number
+  /** Time-series metrics — null until snapshots exist (run `pt sync snapshots`). */
+  timeseries: {
+    from: string
+    to: string
+    snapshot_count: number
+    twr_period: string
+    twr_annualized: string
+    mwr: string | null
+    max_drawdown: string
+    volatility: string
+    sharpe: string
+    calmar: string
+  } | null
+}
+
+export type Snapshot = {
+  date: string
+  total_value: string
+  total_cost_basis: string
+  realized_pnl: string
+  unrealized_pnl: string
+  cash: string
+  holdings_count: number
+  metadata: {
+    by_asset_type?: Record<string, string>
+    by_currency?: Record<string, string>
+    priced_holdings?: number
+    open_holdings?: number
+    tx_total?: number
+  }
+}
+
+export type SnapshotsResponse = {
+  portfolio_id: number
+  from: string | null
+  to: string | null
+  snapshots: Snapshot[]
+}
+
+export type Candle = {
+  time: string
+  open: string | null
+  high: string | null
+  low: string | null
+  close: string | null
+  volume: string | null
+  interval: string
+}
+
+export type CandlesResponse = {
+  symbol: string
+  asset_type: string
+  interval: string
+  candles: Candle[]
+}
+
+export type SparklinesResponse = {
+  days: number
+  series: Record<string, Array<{ time: string; close: string }>>
 }
 
 export type RealizedReport = {
@@ -203,6 +262,55 @@ export const api = {
     if (opts.year) qs.set('year', String(opts.year))
     return request<RealizedReport>(`/portfolios/${portfolioId}/performance/realized?${qs}`)
   },
+
+  // Snapshots — equity-curve / drawdown / allocation-over-time data source
+  listSnapshots: (portfolioId: number, opts: { from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams()
+    if (opts.from) qs.set('start', opts.from)
+    if (opts.to)   qs.set('end',   opts.to)
+    const tail = qs.toString() ? `?${qs}` : ''
+    return request<SnapshotsResponse>(`/portfolios/${portfolioId}/snapshots${tail}`)
+  },
+  generateSnapshots: (portfolioId: number, backfill = 0) =>
+    request<{
+      portfolio_id: number
+      rows_written: number
+      from: string
+      to: string
+      latest: {
+        date: string
+        total_value: string
+        total_cost_basis: string
+        unrealized_pnl: string
+        realized_pnl: string
+        holdings_count: number
+      }
+    }>(
+      `/portfolios/${portfolioId}/snapshots?backfill=${backfill}`,
+      { method: 'POST' },
+    ),
+
+  // Per-asset OHLCV history (for the AssetDetail TradingView-style chart)
+  listCandles: (
+    symbol: string,
+    assetType: string,
+    opts: { start?: string; end?: string; interval?: string; limit?: number } = {},
+  ) => {
+    const qs = new URLSearchParams()
+    if (opts.start)    qs.set('start',    opts.start)
+    if (opts.end)      qs.set('end',      opts.end)
+    qs.set('interval', opts.interval ?? '1day')
+    qs.set('limit', String(opts.limit ?? 2000))
+    return request<CandlesResponse>(
+      `/assets/${encodeURIComponent(symbol)}/${assetType}/candles?${qs}`,
+    )
+  },
+
+  // Bulk per-symbol close-only series for inline holdings-table sparklines
+  holdingSparklines: (portfolioId: number, days = 30) =>
+    request<SparklinesResponse>(
+      `/portfolios/${portfolioId}/holdings/sparklines?days=${days}`,
+    ),
 
   // News
   listNews: (symbol: string, assetType: string, limit = 30) =>

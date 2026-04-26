@@ -5,9 +5,12 @@ Examples:
   pt sync fx --base EUR --quote USD --quote CHF
   pt sync crypto --coin bitcoin --vs-currency usd --days 365
   pt sync stock AAPL --interval 1day --outputsize 365
+  pt sync snapshots                         # today's snapshot for every active portfolio
+  pt sync snapshots -p 1 --backfill 365    # rebuild last 365 days of snapshots for portfolio #1
   pt sync --json fx                         # machine-readable result
 
-Each command is idempotent (upsert on time+symbol+interval).
+Each command is idempotent (upsert on time+symbol+interval, or on the
+(portfolio_id, snapshot_date) compound key for snapshots).
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from pt.data import coingecko as _cg
 from pt.data import frankfurter as _fx
 from pt.data import store as _store
 from pt.data import twelve_data as _td
+from pt.jobs import snapshots as _snap
 
 app = typer.Typer(help="Refresh market data (prices, FX) into TimescaleDB.",
                   no_args_is_help=True)
@@ -130,3 +134,75 @@ def cmd_stock(
          "interval": interval_norm, "rows_written": n},
         f"[green]✓[/green] Twelve Data: wrote {n} {interval_norm} bar(s) for {symbol.upper()}.",
     )
+
+
+@app.command("snapshots")
+def cmd_snapshots(
+    portfolio_id: Optional[int] = typer.Option(
+        None, "--portfolio", "-p",
+        help="Snapshot only this portfolio. Omit to iterate all active portfolios."),
+    backfill: int = typer.Option(
+        0, "--backfill", min=0, max=3650,
+        help="Rebuild the last N days of snapshots. 0 = today only."),
+    end_date: Optional[str] = typer.Option(
+        None, "--end-date",
+        help="ISO date marking the last day to snapshot (default: today)."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Compute but don't write to the DB."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Generate portfolio_snapshots rows feeding the equity-curve / drawdown UI."""
+    if portfolio_id is not None:
+        targets = [portfolio_id]
+    else:
+        targets = list(_snap.list_active_portfolios())
+        if not targets:
+            _emit_error(json_output, "No active portfolios found.", exit_code=3)
+
+    end = date.fromisoformat(end_date) if end_date else None
+    summary: list[dict] = []
+    total_rows = 0
+    for pid in targets:
+        if backfill > 0:
+            rows = _snap.backfill(pid, days=backfill, end_date=end, dry_run=dry_run)
+        else:
+            today = end or date.today()
+            row = _snap.compute_snapshot(pid, today)
+            if not dry_run:
+                _snap.write_snapshot(row)
+            rows = [row]
+
+        latest = rows[-1]
+        summary.append({
+            "portfolio_id": pid,
+            "rows_written": 0 if dry_run else len(rows),
+            "rows_computed": len(rows),
+            "from": rows[0].snapshot_date.isoformat(),
+            "to": latest.snapshot_date.isoformat(),
+            "total_value": str(latest.total_value),
+            "total_cost_basis": str(latest.total_cost_basis),
+            "unrealized_pnl": str(latest.unrealized_pnl),
+            "realized_pnl": str(latest.realized_pnl),
+            "holdings_count": latest.holdings_count,
+        })
+        total_rows += len(rows)
+
+    payload = {
+        "ok": True,
+        "dry_run": dry_run,
+        "portfolios": len(targets),
+        "rows": total_rows,
+        "results": summary,
+    }
+    if json_output:
+        print(json.dumps(payload, default=str))
+    else:
+        verb = "would write" if dry_run else "wrote"
+        console.print(f"[green]✓[/green] Snapshots: {verb} {total_rows} row(s) "
+                      f"across {len(targets)} portfolio(s).")
+        for s in summary:
+            console.print(
+                f"  • portfolio #{s['portfolio_id']}: {s['rows_computed']} day(s) "
+                f"[{s['from']} → {s['to']}], latest total_value={s['total_value']}, "
+                f"holdings={s['holdings_count']}"
+            )

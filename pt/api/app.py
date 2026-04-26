@@ -20,6 +20,7 @@ from pt.api.routes.imports import router as imports_router
 from pt.api.routes.news import router as news_router
 from pt.api.routes.performance import router as performance_router
 from pt.api.routes.portfolios import router as portfolios_router
+from pt.api.routes.snapshots import router as snapshots_router
 from pt.api.routes.sync import router as sync_router
 from pt.api.routes.transactions import router as transactions_router
 from pt.db.connection import get_conn, is_available
@@ -53,6 +54,7 @@ app.include_router(transactions_router, prefix=API_PREFIX)
 app.include_router(holdings_router, prefix=API_PREFIX)
 app.include_router(assets_router, prefix=API_PREFIX)
 app.include_router(performance_router, prefix=API_PREFIX)
+app.include_router(snapshots_router, prefix=API_PREFIX)
 app.include_router(sync_router, prefix=API_PREFIX)
 app.include_router(news_router, prefix=API_PREFIX)
 app.include_router(imports_router, prefix=API_PREFIX)
