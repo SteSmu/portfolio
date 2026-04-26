@@ -1,9 +1,10 @@
 import { Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
+import AssetDetail from './pages/AssetDetail'
 import Dashboard from './pages/Dashboard'
 import Holdings from './pages/Holdings'
-import Transactions from './pages/Transactions'
 import Performance from './pages/Performance'
+import Transactions from './pages/Transactions'
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
         <Route path="holdings" element={<Holdings />} />
         <Route path="transactions" element={<Transactions />} />
         <Route path="performance" element={<Performance />} />
+        <Route path="asset/:symbol/:assetType" element={<AssetDetail />} />
       </Route>
     </Routes>
   )

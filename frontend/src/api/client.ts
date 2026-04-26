@@ -162,4 +162,42 @@ export const api = {
     if (opts.year) qs.set('year', String(opts.year))
     return request<RealizedReport>(`/portfolios/${portfolioId}/performance/realized?${qs}`)
   },
+
+  // News
+  listNews: (symbol: string, assetType: string, limit = 30) =>
+    request<NewsResponse>(`/news/${symbol}/${assetType}?limit=${limit}`),
+  syncNews: (symbol: string, assetType: string, sources?: string[]) =>
+    request<SyncNewsResponse>('/news/sync', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, asset_type: assetType, sources }),
+    }),
+}
+
+export type NewsItem = {
+  id: number
+  symbol: string
+  asset_type: string
+  published_at: string
+  source: string
+  title: string
+  summary: string | null
+  url: string
+  sentiment: string | null
+  metadata: Record<string, unknown> | null
+  fetched_at: string
+}
+
+export type NewsResponse = {
+  symbol: string
+  asset_type: string
+  items: NewsItem[]
+  avg_sentiment_14d: string | null
+  last_fetched_at: string | null
+}
+
+export type SyncNewsResponse = {
+  symbol: string
+  asset_type: string
+  rows_written: number
+  sources: Record<string, { ok: boolean; fetched?: number; written?: number; error?: string }>
 }

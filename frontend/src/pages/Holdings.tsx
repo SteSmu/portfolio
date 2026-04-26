@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
 import { fmtDate, fmtMoney, fmtPrice, fmtQty } from '../lib/format'
@@ -6,6 +7,7 @@ import EmptyPortfolio from '../components/EmptyPortfolio'
 
 export default function Holdings() {
   const { activeId } = useActivePortfolio()
+  const nav = useNavigate()
   const { data, isLoading, error } = useQuery({
     queryKey: ['holdings', activeId],
     queryFn: () => api.listHoldings(activeId!),
@@ -46,8 +48,9 @@ export default function Holdings() {
           <tbody>
             {data.map(h => (
               <tr key={`${h.symbol}-${h.asset_type}`}
-                  className="border-b border-zinc-900 hover:bg-zinc-900/50">
-                <td className="py-2 font-medium">{h.symbol}</td>
+                  className="border-b border-zinc-900 hover:bg-zinc-900/50 cursor-pointer"
+                  onClick={() => nav(`/asset/${encodeURIComponent(h.symbol)}/${h.asset_type}`)}>
+                <td className="py-2 font-medium text-blue-400 hover:underline">{h.symbol}</td>
                 <td className="text-zinc-400">{h.asset_type}</td>
                 <td className="text-right tabular-nums">{fmtQty(h.quantity)}</td>
                 <td className="text-right tabular-nums">{fmtPrice(h.avg_cost)}</td>

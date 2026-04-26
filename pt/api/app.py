@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pt import __version__
 from pt.api.routes.assets import router as assets_router
 from pt.api.routes.holdings import router as holdings_router
+from pt.api.routes.news import router as news_router
 from pt.api.routes.performance import router as performance_router
 from pt.api.routes.portfolios import router as portfolios_router
 from pt.api.routes.sync import router as sync_router
@@ -42,6 +43,7 @@ app.include_router(holdings_router, prefix=API_PREFIX)
 app.include_router(assets_router, prefix=API_PREFIX)
 app.include_router(performance_router, prefix=API_PREFIX)
 app.include_router(sync_router, prefix=API_PREFIX)
+app.include_router(news_router, prefix=API_PREFIX)
 
 
 @app.get("/api/health")

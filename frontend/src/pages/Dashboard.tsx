@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
 import { fmtMoney, fmtPrice, fmtQty, pnlClass } from '../lib/format'
@@ -73,7 +74,12 @@ export default function Dashboard() {
                 .slice(0, 5)
                 .map(h => (
                   <tr key={`${h.symbol}-${h.asset_type}`} className="border-b border-zinc-900">
-                    <td className="py-1.5 font-medium">{h.symbol}</td>
+                    <td className="py-1.5 font-medium">
+                      <Link to={`/asset/${encodeURIComponent(h.symbol)}/${h.asset_type}`}
+                            className="text-blue-400 hover:underline">
+                        {h.symbol}
+                      </Link>
+                    </td>
                     <td className="text-zinc-400">{h.asset_type}</td>
                     <td className="text-right tabular-nums">{fmtQty(h.quantity)}</td>
                     <td className="text-right tabular-nums">{fmtPrice(h.avg_cost)}</td>
