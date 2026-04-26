@@ -1,0 +1,110 @@
+# Frontend (`frontend/`)
+
+React 19 + TS 5.9 + Vite 8 + Tailwind 4 + TanStack Query 5 + React
+Router 7. Dark-mode-first. Mobile-friendly via Tailwind responsive
+utilities. Vite proxies `/api` → `http://localhost:8430` in dev.
+
+## Pages
+
+| Page | Path | What it shows | Talks to |
+|--|--|--|--|
+| [`Dashboard.tsx`](../../frontend/src/pages/Dashboard.tsx) | `/` | 4 stat cards (open lots, cost basis, realized P&L, tx count) + top-5 holdings preview with clickable symbols | `performanceSummary`, `listHoldings` |
+| [`Holdings.tsx`](../../frontend/src/pages/Holdings.tsx) | `/holdings` | Full table with current price / market value / unrealized P&L / P&L %, total cards, "Refresh prices" button | `listHoldings` (with_prices), `syncPortfolioPrices` |
+| [`Transactions.tsx`](../../frontend/src/pages/Transactions.tsx) | `/transactions` | Add-form + sortable list + per-row soft-delete | `listTransactions`, `createTransaction`, `deleteTransaction` |
+| [`Performance.tsx`](../../frontend/src/pages/Performance.tsx) | `/performance` | Method switcher (fifo/lifo/average), year filter, realized totals + by-symbol, open lots, matched sells | `costBasis`, `realized` |
+| [`AssetDetail.tsx`](../../frontend/src/pages/AssetDetail.tsx) | `/asset/:symbol/:assetType` | Position summary, transaction history, news feed with sentiment, "Refresh news" | `listHoldings`, `listTransactions`, `listNews`, `syncNews` |
+
+## Building blocks
+
+| File | Purpose |
+|--|--|
+| [`App.tsx`](../../frontend/src/App.tsx) | Router |
+| [`main.tsx`](../../frontend/src/main.tsx) | QueryClient (30s staleTime, 1 retry) + BrowserRouter |
+| [`api/client.ts`](../../frontend/src/api/client.ts) | Typed REST client + types (Portfolio, Transaction, Holding, NewsItem, etc.) |
+| [`lib/format.ts`](../../frontend/src/lib/format.ts) | `fmtMoney` / `fmtPrice` / `fmtQty` / `fmtPct` / `fmtDate` / `pnlClass` / `pnlSign` |
+| [`state/portfolio.ts`](../../frontend/src/state/portfolio.ts) | `useActivePortfolio()` — localStorage-backed active id with cross-component sync via tiny event bus |
+| [`components/Layout.tsx`](../../frontend/src/components/Layout.tsx) | Sticky header (nav + portfolio picker + db-health badge), main, footer |
+| [`components/PortfolioPicker.tsx`](../../frontend/src/components/PortfolioPicker.tsx) | `<select>` of portfolios, auto-picks first when nothing active |
+| [`components/EmptyPortfolio.tsx`](../../frontend/src/components/EmptyPortfolio.tsx) | First-run onboarding (creates first portfolio inline) |
+
+## Number-formatting rules
+
+| Helper | Min dec | Max dec | Use for |
+|--|--|--|--|
+| `fmtMoney` | 2 | 2 | Fiat amounts, total cost, market value, P&L. Always shows cents |
+| `fmtPrice` | 2 | 4 | Per-unit prices (avg cost, current price). Shows cents always, strips trailing zeros past cents |
+| `fmtQty`   | 0 | 8 | Quantities. `8`, `0,5`, `0,12345678` — no trailing zeros |
+| `fmtPct`   | — | 2 | `+12.34%` — input is a ratio (`0.1234`), output is percent |
+
+`pnlClass(value)` returns `'gain'` / `'loss'` / `'flat'` for color-coding.
+Defined in [`index.css`](../../frontend/src/index.css) as Tailwind composites.
+
+## Active-portfolio hook
+
+`useActivePortfolio()` is intentionally minimal — no Redux, no Zustand. A
+module-level `Set` of subscribers keeps multiple `<PortfolioPicker>` (or
+any component using the hook) in sync after a `setActive(id)` call.
+Survives page reload via `localStorage`.
+
+## API integration patterns
+
+```ts
+const { data, isLoading, error } = useQuery({
+  queryKey: ['holdings', activeId],
+  queryFn: () => api.listHoldings(activeId!),
+  enabled: activeId != null,
+})
+
+const sync = useMutation({
+  mutationFn: () => api.syncPortfolioPrices(activeId!),
+  onSuccess: () => qc.invalidateQueries({ queryKey: ['holdings', activeId] }),
+})
+```
+
+Decimal values arrive from the API as strings. Display helpers parse via
+`Number(...)` only at the render boundary. **Never** combine money strings
+arithmetically — the backend is the source of truth for sums.
+
+## Production build
+
+[`Dockerfile`](../../frontend/Dockerfile) is multi-stage: node 20 builds the
+SPA, nginx 1.27 serves it. [`nginx.conf`](../../frontend/nginx.conf) does:
+- Long-cache hashed assets (`/assets/*`, 1y immutable)
+- Proxy `/api/*` to `pt-api:8430` (the docker-compose service name)
+- SPA fallback (`try_files $uri /index.html`)
+- No access log on `/api/health`
+
+## Gotchas
+
+- **Tailwind v4 forbids `@apply` on self-defined classes.** A class
+  definition cannot reference another class defined in the same `@layer
+  components` block. The build fails with "Cannot apply unknown utility
+  class". → fix: inline the utilities in each variant. Example: `.btn-primary`
+  contains the rounded/px/py/text-sm chain plus its own bg/text — no
+  `.btn` base class.
+- **Money math in the frontend = bug.** The backend returns Decimal
+  strings; the frontend renders them. The Dashboard total in the
+  Holdings page does sum `Number(h.market_value)` for the stat card, which
+  is acceptable because the API guarantees those values are already
+  reconciled — but never compute realized P&L or rebalance percentages
+  client-side.
+- **`with_prices=true` is the default on `listHoldings`.** Optional
+  fields (`current_price`, `market_value`, `unrealized_pnl`,
+  `unrealized_pnl_pct`) may be `null` when no candle exists for an asset.
+  Always render `—` for null instead of crashing on `Number(null)`.
+- **`encodeURIComponent` on the symbol** in router links is required —
+  symbols like `BITCOIN-USD` work, but anything containing a slash (rare
+  for tickers) would otherwise break path matching.
+- **Vite HMR can show stale CSS errors after fixing them.** A failed
+  Tailwind compile may stick on screen until you `location.reload()`
+  manually. Don't chase ghosts — refresh first, then debug.
+- **TypeScript strict mode is on.** `verbatimModuleSyntax`,
+  `erasableSyntaxOnly`, `noUnusedLocals`, etc. Imports must use `import
+  type { ... }` for type-only symbols, otherwise the build fails.
+- **`tsconfig.node.json` has `types: []`** (was `["node"]` originally) —
+  we don't ship `@types/node` since vite.config.ts doesn't import any
+  node API. If you ever need `process.env.X` in `vite.config.ts`, add
+  `@types/node` to devDependencies and flip this back.
+- **Vite port 5174, not the React 5173 default.** Avoids colliding with
+  claude-trader's frontend. Backend port 8430 likewise. Both are hardcoded
+  in `vite.config.ts` and CORS in `pt/api/app.py`.
