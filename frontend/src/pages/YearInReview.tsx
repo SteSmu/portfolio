@@ -304,7 +304,7 @@ function HeroBlock({
 }
 
 function PeriodBlock({
-  title, period, tone, wide,
+  title, period, wide,
 }: { title: string; period: PeriodResult; tone: 'gain' | 'loss'; wide?: boolean }) {
   if (period == null) {
     return (
