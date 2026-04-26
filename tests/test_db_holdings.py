@@ -113,6 +113,54 @@ def test_separate_symbols_produce_separate_rows(isolated_portfolio):
     assert syms == ["AAPL", "MSFT"]
 
 
+def test_transfer_in_contributes_cost_basis(isolated_portfolio):
+    """A pure transfer_in (e.g. PDF broker-statement import) carries cost_basis.
+
+    Cost convention matches `pt.performance.cost_basis`: transfer_in.price is
+    the cost-per-share at acquisition (broker statements expose this as
+    Einstandskurs). Without this the holdings totals show 0 € for any
+    portfolio populated solely via PDF import.
+    """
+    from pt.db import holdings
+
+    _add(isolated_portfolio, "AAPL", "transfer_in", "10", "180", fees="0")
+    rows = holdings.list_for_portfolio(isolated_portfolio)
+    assert len(rows) == 1
+    assert rows[0]["quantity"] == Decimal("10")
+    assert rows[0]["total_cost"] == Decimal("1800")
+    assert rows[0]["avg_cost"] == Decimal("180")
+
+
+def test_transfer_in_with_fees_adds_to_cost(isolated_portfolio):
+    from pt.db import holdings
+
+    _add(isolated_portfolio, "AAPL", "transfer_in", "10", "180", fees="5")
+    row = holdings.list_for_portfolio(isolated_portfolio)[0]
+    assert row["total_cost"] == Decimal("1805")  # 1800 + 5
+
+
+def test_transfer_out_reduces_cost_symmetric_to_sell(isolated_portfolio):
+    from pt.db import holdings
+
+    _add(isolated_portfolio, "AAPL", "transfer_in",  "10", "180")
+    _add(isolated_portfolio, "AAPL", "transfer_out",  "4", "200")
+    row = holdings.list_for_portfolio(isolated_portfolio)[0]
+    assert row["quantity"] == Decimal("6")
+    assert row["total_cost"] == Decimal("1000")  # 1800 - 800
+
+
+def test_buy_then_transfer_in_accumulates_cost(isolated_portfolio):
+    """Mixed history: bought 5 @ 100, then transferred in 5 @ 200 from another broker."""
+    from pt.db import holdings
+
+    _add(isolated_portfolio, "AAPL", "buy",          "5", "100")
+    _add(isolated_portfolio, "AAPL", "transfer_in",  "5", "200")
+    row = holdings.list_for_portfolio(isolated_portfolio)[0]
+    assert row["quantity"] == Decimal("10")
+    assert row["total_cost"] == Decimal("1500")  # 500 + 1000
+    assert row["avg_cost"] == Decimal("150")
+
+
 def test_get_for_symbol_returns_correct_row(isolated_portfolio):
     from pt.db import holdings
 

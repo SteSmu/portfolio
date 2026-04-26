@@ -48,8 +48,8 @@ def list_for_portfolio(portfolio_id: int, include_zero: bool = False) -> list[di
                 ELSE 0
             END AS qty_delta,
             CASE
-                WHEN action = 'buy'  THEN  quantity * price + fees
-                WHEN action = 'sell' THEN -(quantity * price - fees)
+                WHEN action IN ('buy', 'transfer_in')   THEN  quantity * price + fees
+                WHEN action IN ('sell', 'transfer_out') THEN -(quantity * price - fees)
                 ELSE 0
             END AS cost_delta
         FROM portfolio.transactions
