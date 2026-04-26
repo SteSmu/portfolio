@@ -122,6 +122,18 @@ When fewer than 2 snapshots exist the whole `timeseries` block is null;
 the frontend shows a "needs snapshots — run `pt sync snapshots
 --backfill 365`" hint.
 
+**Cash-flow accounting.** This tracker has no cash position — every
+`buy` / `transfer_in` is fresh capital entering the portfolio, every
+`sell` / `transfer_out` is capital leaving. The route's
+[`_cash_flows_by_date`](../../pt/api/routes/performance.py) bucket sums
+those per execution-date and feeds them into `TwrSnapshot.cash_flow` so
+the sub-period formula `r_i = (V_i - CF_i) / V_{i-1} - 1` strips the
+injection. Without this step a 16k buy on a 12k portfolio booked as a
++130% daily "return" and inflated TWR / vola / Sharpe / Calmar — see
+`test_performance_summary_subtracts_buy_cashflows_from_twr`. The same
+cash-flow set is reused for MWR / XIRR with the standard sign
+convention (buys negative, sells positive, dividends positive).
+
 ## Gotchas
 
 - **Never `float` for money — use `Decimal`.** The hard rule. Internal stats

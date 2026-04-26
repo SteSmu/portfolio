@@ -142,6 +142,57 @@ Pattern used by `EquityCurve`'s `benchmark` prop (Dashboard + Performance):
    no implicit fetch — the picker / a future explicit "sync" button is
    the place to trigger backfill.
 
+## Equity / drawdown series picking
+
+Both [`EquityCurve`](../../frontend/src/components/charts/EquityCurve.tsx)
+and [`DrawdownChart`](../../frontend/src/components/charts/DrawdownChart.tsx)
+go through [`lib/snapshotSeries.ts:pickEquitySeries`](../../frontend/src/lib/snapshotSeries.ts).
+The helper returns:
+
+- `mode: 'base'` and base-currency values when **every** visible snapshot
+  has `total_value_base != null`. Cost basis is FX-converted via the
+  per-snapshot ratio `total_value_base / total_value` (the implicit FX
+  rate the snapshot job used) so the two lines stay comparable.
+- `mode: 'naive'` and FX-naive `total_value` / `total_cost_basis`
+  otherwise. The chart still renders; parents can surface a
+  "run `pt sync fx`" hint when the portfolio actually mixes currencies.
+
+This avoids the failure mode where an EUR-base portfolio of USD assets
+showed a y-axis labelled like EUR but populated with raw USD sums —
+making both the visual scale and the cost-basis comparison misleading.
+
+## Asset price chart — news markers
+
+[`AssetPriceChart.tsx`](../../frontend/src/components/charts/AssetPriceChart.tsx)
+takes `news?: NewsItem[]` and `showNews?: boolean`. When the toggle is on:
+
+1. News items are bucketed by UTC second; if multiple items hit the same
+   bucket the strongest-sentiment one wins the dot (the click handler
+   still maps clicks within ±1 day to the closest item).
+2. One `circle` marker per bucket, `position: 'inBar'`, tinted by
+   sentiment: `>0 → --gain`, `<0 → --loss`, neutral → `--text-tertiary`.
+3. Markers are produced fresh each effect run, then pushed via
+   `markersRef.setMarkers(...)`. The plugin instance is created once and
+   reused — calling `createSeriesMarkers(series, ...)` per render
+   accumulates plugins instead of replacing them. Same pattern is now
+   used for `series.createPriceLine` (cost-basis line): the prior line
+   is removed before a new one is added.
+4. `chart.subscribeClick` snaps the click time to the nearest marker
+   within ±1 day and opens the news URL in a new tab.
+
+Toggle defaults to off — multi-year windows can pin dozens of dots and
+clutter the price line. The chart still renders cleanly when `news` is
+empty or the toggle is off.
+
+## Allocation over time
+
+[`AllocationOverTime.tsx`](../../frontend/src/components/charts/AllocationOverTime.tsx)
+is a stacked-area variant of the Allocation page (`view = 'over-time'`).
+Sources data from `metadata.by_asset_type` per snapshot; one line per
+asset type, stacked. **Doesn't override `color` per-series** — the
+theme's categorical palette (`--cat-1..8`) is the only colour source.
+See the ECharts `var(--token)` gotcha below for why.
+
 ## Benchmark sync UX
 
 `<BenchmarkPicker>` exposes a small `⟳` button that fires
