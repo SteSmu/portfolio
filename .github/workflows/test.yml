@@ -1,0 +1,115 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12"]
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_DB: claude_trader
+          POSTGRES_USER: trader
+          POSTGRES_PASSWORD: trader_dev_2024
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U trader -d claude_trader"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PT_DB_HOST: localhost
+      PT_DB_PORT: "5434"
+      PT_DB_NAME: claude_trader
+      PT_DB_USER: trader
+      PT_DB_PASSWORD: trader_dev_2024
+      PT_DB_SCHEMA: portfolio
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Wait for TimescaleDB
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5434 -U trader >/dev/null 2>&1; then
+              echo "DB up after $i tries"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "DB never became ready"; exit 1
+
+      - name: Apply schema (claude-trader base + portfolio extensions)
+        env:
+          PGPASSWORD: trader_dev_2024
+        run: |
+          # Minimal claude-trader base schema (just the candles + market_meta tables
+          # the portfolio repo depends on — full schema lives in the claude-trader repo)
+          psql -h localhost -p 5434 -U trader -d claude_trader <<'SQL'
+          CREATE EXTENSION IF NOT EXISTS timescaledb;
+          CREATE TABLE IF NOT EXISTS candles (
+              time TIMESTAMPTZ NOT NULL, symbol TEXT NOT NULL, interval TEXT NOT NULL,
+              open DOUBLE PRECISION NOT NULL, high DOUBLE PRECISION NOT NULL,
+              low DOUBLE PRECISION NOT NULL, close DOUBLE PRECISION NOT NULL,
+              volume DOUBLE PRECISION NOT NULL, trades INTEGER,
+              source TEXT NOT NULL DEFAULT 'binance', taker_buy_volume DOUBLE PRECISION,
+              PRIMARY KEY (time, symbol, interval)
+          );
+          SELECT create_hypertable('candles', 'time', if_not_exists => TRUE);
+          CREATE INDEX IF NOT EXISTS idx_candles_symbol_interval_time
+            ON candles (symbol, interval, time DESC);
+          CREATE TABLE IF NOT EXISTS market_meta (
+              time TIMESTAMPTZ NOT NULL, source TEXT NOT NULL, symbol TEXT NOT NULL DEFAULT '',
+              value DOUBLE PRECISION NOT NULL, metadata JSONB,
+              PRIMARY KEY (time, source, symbol)
+          );
+          SELECT create_hypertable('market_meta', 'time', if_not_exists => TRUE);
+          SQL
+          psql -h localhost -p 5434 -U trader -d claude_trader -f pt/db/schema_portfolio.sql
+
+      - name: Run pytest
+        run: pytest -v --tb=short
+
+  frontend:
+    name: tsc + vite build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: ./node_modules/.bin/tsc -b
+      - run: npm run build

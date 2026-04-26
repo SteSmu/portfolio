@@ -32,8 +32,13 @@ def test_health_returns_ok(client):
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
-    assert body["db"] == "ok"
+    assert body["db"]["status"] == "ok"
+    assert body["db"]["latency_ms"] >= 0
     assert "version" in body
+    assert "now" in body
+    assert "counts" in body
+    # Per-request id echoed back so clients can trace
+    assert "x-request-id" in {k.lower() for k in r.headers}
 
 
 # -------------------- portfolios -----------------------------------------------

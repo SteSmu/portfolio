@@ -1,0 +1,86 @@
+# Production compose. Use ONE of two DB strategies:
+#
+#   1) Shared with claude-trader (default in dev): start the timescaledb
+#      service from the claude-trader repo first, then `docker compose
+#      -f docker-compose.prod.yml up -d` here. The api joins the existing
+#      `claude-trader_default` network so it can resolve `ct-timescaledb`.
+#
+#   2) Standalone: uncomment the timescaledb service below + flip the
+#      api's `PT_DB_HOST` to `pt-timescaledb`. Then this file is fully
+#      self-contained.
+#
+# Frontend is built at image-build time and served by nginx, with /api
+# proxied to the api container by name (pt-api:8430).
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: portfolio-api:latest
+    container_name: pt-api
+    restart: unless-stopped
+    environment:
+      PT_DB_HOST: ${PT_DB_HOST:-ct-timescaledb}
+      PT_DB_PORT: "5432"
+      PT_DB_NAME: ${PT_DB_NAME:-claude_trader}
+      PT_DB_USER: ${PT_DB_USER:-trader}
+      PT_DB_PASSWORD: ${PT_DB_PASSWORD:-trader_dev_2024}
+      PT_DB_SCHEMA: ${PT_DB_SCHEMA:-portfolio}
+      PT_LOG_FORMAT: json
+      PT_LOG_LEVEL: INFO
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      MARKETAUX_API_KEY: ${MARKETAUX_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8430/api/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - default
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: portfolio-frontend:latest
+    container_name: pt-frontend
+    restart: unless-stopped
+    ports:
+      - "${PT_FRONTEND_PORT:-5174}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - default
+
+  # Uncomment for standalone DB (no claude-trader running):
+  #
+  # timescaledb:
+  #   image: timescale/timescaledb:latest-pg16
+  #   container_name: pt-timescaledb
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: ${PT_DB_NAME:-claude_trader}
+  #     POSTGRES_USER: ${PT_DB_USER:-trader}
+  #     POSTGRES_PASSWORD: ${PT_DB_PASSWORD:-trader_dev_2024}
+  #   volumes:
+  #     - pt_db_data:/var/lib/postgresql/data
+  #   networks:
+  #     - default
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U trader -d claude_trader"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+networks:
+  default:
+    name: ${PT_NETWORK:-claude-trader_default}
+    external: true
+
+# volumes:
+#   pt_db_data:
