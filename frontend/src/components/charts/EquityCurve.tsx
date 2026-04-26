@@ -1,5 +1,6 @@
 import type { EChartsOption } from 'echarts'
 import type { Snapshot } from '../../api/client'
+import { pickEquitySeries } from '../../lib/snapshotSeries'
 import Chart from './Chart'
 
 export type BenchmarkOverlay = {
@@ -54,14 +55,20 @@ export default function EquityCurve({
     )
   }
 
-  const valueSeries = snapshots.map(s => [s.date, Number(s.total_value)])
-  const costSeries  = snapshots.map(s => [s.date, Number(s.total_cost_basis)])
+  // Prefer base-currency series when every visible snapshot has it. The
+  // helper also FX-converts cost basis via the per-day implicit rate so
+  // both lines are in the same currency — without that, an EUR portfolio
+  // holding USD assets would compare a USD value line to a USD cost line
+  // labelled as EUR (the chart-area helper formats in the portfolio's
+  // base currency below).
+  const { mode, currency, values: valueSeries, costs: costSeries } = pickEquitySeries(snapshots)
+  const moneyFormat = mode === 'base' && currency ? currency : 'EUR'
 
   const option: EChartsOption = {
     grid: { left: 8, right: 16, top: 24, bottom: 24, containLabel: true },
     tooltip: {
       trigger: 'axis',
-      valueFormatter: (v) => formatMoney(v as number),
+      valueFormatter: (v) => formatMoney(v as number, moneyFormat),
     },
     legend: {
       top: 0,
@@ -115,9 +122,15 @@ export default function EquityCurve({
   return <Chart option={option} height={height} />
 }
 
-function formatMoney(v: number): string {
+function formatMoney(v: number, currency = 'EUR'): string {
   if (!Number.isFinite(v)) return '—'
-  return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(v)
+  // Some "currencies" coming from snapshot metadata may be unknown to
+  // Intl (rare — fallback keeps the number renderable).
+  try {
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency }).format(v)
+  } catch {
+    return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 }).format(v) + ' ' + currency
+  }
 }
 
 function formatAxisMoney(v: number): string {

@@ -1,5 +1,6 @@
 import type { EChartsOption } from 'echarts'
 import type { Snapshot } from '../../api/client'
+import { drawdownFromValues, pickEquitySeries } from '../../lib/snapshotSeries'
 import Chart from './Chart'
 
 type Props = {
@@ -28,15 +29,11 @@ export default function DrawdownChart({ snapshots, height = 200 }: Props) {
     )
   }
 
-  let peak = 0
-  const data: [string, number][] = []
-  for (const s of snapshots) {
-    const v = Number(s.total_value)
-    if (!Number.isFinite(v) || v <= 0) continue
-    if (v > peak) peak = v
-    const dd = peak > 0 ? (v - peak) / peak * 100 : 0
-    data.push([s.date, dd])
-  }
+  // Use base-currency values when available so the drawdown reflects
+  // FX moves alongside price moves (an EUR investor in USD assets feels
+  // both). Falls back to FX-naive total_value otherwise.
+  const { values } = pickEquitySeries(snapshots)
+  const data = drawdownFromValues(values)
 
   const minDd = data.length ? Math.min(...data.map(d => d[1])) : 0
 
