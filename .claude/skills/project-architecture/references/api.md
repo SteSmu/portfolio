@@ -16,6 +16,7 @@ never math's it).
 | [`performance.py`](../../pt/api/routes/performance.py) | `/portfolios/{id}/performance` | `GET /cost-basis`, `GET /realized` (year filter), `GET /summary` |
 | [`sync.py`](../../pt/api/routes/sync.py) | `/sync` | `POST /fx`, `POST /crypto`, `POST /stock`, `POST /portfolio/{id}/auto-prices` |
 | [`news.py`](../../pt/api/routes/news.py) | `/news` | `GET /{symbol}/{type}`, `POST /sync` |
+| [`imports.py`](../../pt/api/routes/imports.py) | `/portfolios/{id}/import` | `POST /pdf` (multipart, `?dry_run=bool`) — see [pdf-import.md](pdf-import.md) |
 
 Plus `GET /api/health` (in `app.py`) returning status + version + DB
 latency + per-table counts.

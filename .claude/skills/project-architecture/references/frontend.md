@@ -26,6 +26,7 @@ utilities. Vite proxies `/api` → `http://localhost:8430` in dev.
 | [`components/Layout.tsx`](../../frontend/src/components/Layout.tsx) | Sticky header (nav + portfolio picker + db-health badge), main, footer |
 | [`components/PortfolioPicker.tsx`](../../frontend/src/components/PortfolioPicker.tsx) | `<select>` of portfolios, auto-picks first when nothing active |
 | [`components/EmptyPortfolio.tsx`](../../frontend/src/components/EmptyPortfolio.tsx) | First-run onboarding (creates first portfolio inline) |
+| [`components/PdfImport.tsx`](../../frontend/src/components/PdfImport.tsx) | Drop-in PDF upload widget (file → dry-run preview → confirm → write). Mounted on Holdings (also visible on the empty-state). See [pdf-import.md](pdf-import.md). |
 
 ## Number-formatting rules
 
