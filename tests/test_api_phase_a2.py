@@ -92,3 +92,37 @@ def test_performance_summary_timeseries_null_without_snapshots(client, isolated_
     r = client.get(f"/api/portfolios/{isolated_portfolio}/performance/summary")
     assert r.status_code == 200
     assert r.json()["timeseries"] is None
+
+
+def test_performance_summary_subtracts_buy_cashflows_from_twr(client, isolated_portfolio):
+    """A buy injects fresh capital — TWR must NOT count it as a return.
+
+    Regression for the case where the user added a 16k buy on top of a
+    12k portfolio: without subtracting cash flows the day's "return"
+    booked as +130%, then chained into a +100%+ period TWR and 248%
+    annualized vola. With cash flows correctly fed in, both subperiod
+    returns should be ≈ 0 (price didn't move) and the period TWR ≈ 0.
+    """
+    from pt.api.routes.performance import _cash_flows_by_date
+
+    pid = isolated_portfolio
+    # Day 1: small initial buy (10 @ 100 USD = 1000 cost basis).
+    _tx.insert(
+        portfolio_id=pid, symbol="QQQ", asset_type="stock", action="buy",
+        executed_at=datetime(2026, 1, 5, tzinfo=timezone.utc),
+        quantity=Decimal("10"), price=Decimal("100"),
+        trade_currency="USD", source="test",
+    )
+    # Day 5: big buy at the same price (cost basis 1000 → 5000, value
+    # also 1000 → 5000; price unchanged means true sub-period return = 0).
+    _tx.insert(
+        portfolio_id=pid, symbol="QQQ", asset_type="stock", action="buy",
+        executed_at=datetime(2026, 1, 9, tzinfo=timezone.utc),
+        quantity=Decimal("40"), price=Decimal("100"),
+        trade_currency="USD", source="test",
+    )
+
+    # Per-date cashflow helper sees both buys as positive flows.
+    flows = _cash_flows_by_date(_tx.list_for_portfolio(portfolio_id=pid, limit=None))
+    assert flows[datetime(2026, 1, 5).date()] == Decimal("1000")
+    assert flows[datetime(2026, 1, 9).date()] == Decimal("4000")

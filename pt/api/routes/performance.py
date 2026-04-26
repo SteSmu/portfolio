@@ -119,11 +119,19 @@ def summary(
 
     timeseries: dict | None = None
     if len(snapshots) >= 2:
+        # Per-day net external cash flow from the tx log. This tracker has no
+        # standalone cash position — every buy / transfer_in is fresh money
+        # entering the portfolio, every sell / transfer_out is money leaving.
+        # Without subtracting these, the TWR sub-period for a day with a buy
+        # would treat the new capital as a return (a 16k buy on a 12k
+        # portfolio would book as a +130% daily return and inflate TWR /
+        # vola / Sharpe / Calmar wildly).
+        cf_by_date = _cash_flows_by_date(txs)
         twr_snaps = [
             TwrSnapshot(
                 when=date.fromisoformat(s["date"]),
                 value=s["total_value"],
-                cash_flow=Decimal("0"),
+                cash_flow=cf_by_date.get(date.fromisoformat(s["date"]), Decimal("0")),
             )
             for s in snapshots
             if s["total_value"] is not None
@@ -162,6 +170,49 @@ def summary(
         **cost_basis_summary,
         "timeseries": timeseries,
     }
+
+
+def _cash_flows_by_date(txs: list[dict]) -> dict[date, Decimal]:
+    """Bucket external cash-flows per execution date.
+
+    Convention used by `pt.performance.twr.Snapshot.cash_flow`: positive =
+    money entering the portfolio (buy / transfer_in), negative = leaving
+    (sell / transfer_out). This tracker has no cash position, so every
+    buy is fresh capital — see the call-site comment for why feeding 0
+    here breaks TWR.
+
+    Skips deleted rows. Dividends count as inflows (cash credit you received,
+    no corresponding sell), matching the MWR convention in `_try_mwr`.
+    """
+    out: dict[date, Decimal] = {}
+    for t in txs:
+        if t.get("deleted_at") is not None:
+            continue
+        action = t.get("action")
+        try:
+            qty = Decimal(t["quantity"])
+            price = Decimal(t["price"])
+            fees = Decimal(t.get("fees") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        when = t["executed_at"]
+        # Snapshots are bucketed by date (UTC), so flatten datetimes.
+        if isinstance(when, datetime):
+            d = when.date()
+        elif isinstance(when, date):
+            d = when
+        else:
+            d = date.fromisoformat(str(when)[:10])
+        if action in {"buy", "transfer_in"}:
+            cf = qty * price + fees
+        elif action in {"sell", "transfer_out"}:
+            cf = -(qty * price - fees)
+        elif action == "dividend":
+            cf = qty * price
+        else:
+            continue
+        out[d] = out.get(d, Decimal("0")) + cf
+    return out
 
 
 def _try_mwr(
