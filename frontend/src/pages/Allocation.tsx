@@ -5,9 +5,10 @@ import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
 import EmptyPortfolio from '../components/EmptyPortfolio'
 import AllocationSunburst from '../components/charts/AllocationSunburst'
+import AllocationOverTime from '../components/charts/AllocationOverTime'
 import { fmtMoney, fmtPct } from '../lib/format'
 
-type View = 'sunburst' | 'donut'
+type View = 'sunburst' | 'donut' | 'over-time'
 
 export default function Allocation() {
   const { activeId } = useActivePortfolio()
@@ -17,6 +18,14 @@ export default function Allocation() {
     queryKey: ['holdings', activeId],
     queryFn: () => api.listHoldings(activeId!),
     enabled: activeId != null,
+  })
+  // Snapshots only fetched when needed for the over-time view — keeps the
+  // sunburst/donut path zero-extra-network.
+  const snaps = useQuery({
+    queryKey: ['snapshots', activeId],
+    queryFn: () => api.listSnapshots(activeId!),
+    enabled: activeId != null && view === 'over-time',
+    staleTime: 60_000,
   })
 
   if (activeId == null) return <EmptyPortfolio />
@@ -43,17 +52,27 @@ export default function Allocation() {
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div>
             <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {view === 'sunburst' ? 'Asset class → Currency → Symbol' : 'Asset class'}
+              {view === 'sunburst' ? 'Asset class → Currency → Symbol'
+                : view === 'donut'  ? 'Asset class'
+                : 'Asset class over time'}
             </h2>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-              FX-naive · sized by market value (cost basis if no live price)
+              {view === 'over-time'
+                ? 'Stacked area · per-snapshot breakdown from `metadata.by_asset_type`'
+                : 'FX-naive · sized by market value (cost basis if no live price)'}
             </p>
           </div>
           <span className="text-sm tabular-nums" style={{ color: 'var(--text-secondary)' }}>
             total: <strong style={{ color: 'var(--text-primary)' }}>{fmtMoney(total)}</strong>
           </span>
         </div>
-        {holdings.isLoading ? (
+        {view === 'over-time' ? (
+          snaps.isLoading ? (
+            <div className="skeleton h-96" />
+          ) : (
+            <AllocationOverTime snapshots={snaps.data?.snapshots ?? []} height={420} />
+          )
+        ) : holdings.isLoading ? (
           <div className="skeleton h-96" />
         ) : (
           <AllocationSunburst holdings={live} variant={view} height={420} />
@@ -114,7 +133,7 @@ export default function Allocation() {
 }
 
 function ViewToggle({ value, onChange }: { value: View; onChange: (v: View) => void }) {
-  const opts: View[] = ['sunburst', 'donut']
+  const opts: View[] = ['sunburst', 'donut', 'over-time']
   return (
     <div
       className="inline-flex rounded-md p-0.5 text-xs"
