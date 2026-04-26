@@ -58,7 +58,8 @@ def holding_sparklines(
             symbol=h["symbol"],
             asset_type=h["asset_type"],
             start=start, end=end,
-            interval="1day", limit=days + 5,
+            interval=list(_prices.DAILY_INTERVALS),
+            limit=days + 5,
         )
         # Reduce to a flat list of closes (oldest → newest).
         closes = [

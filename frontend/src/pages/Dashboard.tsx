@@ -1,12 +1,20 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
-import { fmtMoney, fmtPrice, fmtQty, pnlClass } from '../lib/format'
+import { fmtMoney, fmtPct, fmtQty, pnlSign } from '../lib/format'
 import EmptyPortfolio from '../components/EmptyPortfolio'
+import EquityCurve from '../components/charts/EquityCurve'
+import Sparkline from '../components/charts/Sparkline'
+import PeriodSelector, { type Period, periodStart } from '../components/PeriodSelector'
 
 export default function Dashboard() {
   const { activeId } = useActivePortfolio()
+  const qc = useQueryClient()
+
+  const [period, setPeriod] = useState<Period>('3M')
+  const start = useMemo(() => periodStart(period), [period])
 
   const summary = useQuery({
     queryKey: ['perf-summary', activeId],
@@ -18,88 +26,366 @@ export default function Dashboard() {
     queryFn: () => api.listHoldings(activeId!),
     enabled: activeId != null,
   })
+  // Always pull the full series for delta computation; the chart slices what it shows.
+  const snaps = useQuery({
+    queryKey: ['snapshots', activeId],
+    queryFn: () => api.listSnapshots(activeId!),
+    enabled: activeId != null,
+  })
+  const sparks = useQuery({
+    queryKey: ['sparklines', activeId],
+    queryFn: () => api.holdingSparklines(activeId!, 30),
+    enabled: activeId != null,
+  })
+
+  const generateSnapshots = useMutation({
+    mutationFn: () => api.generateSnapshots(activeId!, 365),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['snapshots', activeId] })
+      qc.invalidateQueries({ queryKey: ['perf-summary', activeId] })
+    },
+  })
 
   if (activeId == null) return <EmptyPortfolio />
 
+  const latest = snaps.data?.snapshots.at(-1)
+  const visibleSnaps = useMemo(() => {
+    if (!snaps.data) return []
+    if (!start) return snaps.data.snapshots
+    return snaps.data.snapshots.filter(s => s.date >= start)
+  }, [snaps.data, start])
+
+  const totalValue = latest ? Number(latest.total_value) : null
+  const costBasis  = latest ? Number(latest.total_cost_basis) : null
+  const unrealized = latest ? Number(latest.unrealized_pnl) : null
+  const realized   = summary.data ? Number(summary.data.realized_pnl) : null
+
+  const dlt1 = deltaPct(snaps.data?.snapshots ?? [], 1)
+  const dlt7 = deltaPct(snaps.data?.snapshots ?? [], 7)
+  const dlt365 = deltaPct(snaps.data?.snapshots ?? [], 365)
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Dashboard
+        </h1>
+        <PeriodSelector value={period} onChange={setPeriod} />
+      </div>
 
-      {summary.data && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Stat label="Open positions" value={String(summary.data.open_lot_count)} />
-          <Stat label="Cost basis" value={fmtMoney(summary.data.open_cost_basis)} />
-          <Stat
-            label="Realized P&L"
-            value={fmtMoney(summary.data.realized_pnl)}
-            pnl={summary.data.realized_pnl}
+      {/* Hero — primary KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KpiCard
+          label="Portfolio value"
+          primary={totalValue != null ? fmtMoney(totalValue) : '—'}
+          deltas={latest ? [['1d', dlt1], ['7d', dlt7], ['1Y', dlt365]] : []}
+          loading={snaps.isLoading}
+        />
+        <KpiCard
+          label="Cost basis"
+          primary={costBasis != null ? fmtMoney(costBasis) : '—'}
+          loading={summary.isLoading}
+        />
+        <KpiCard
+          label="Unrealized P&L"
+          primary={unrealized != null ? fmtMoney(unrealized) : '—'}
+          tone={tone(unrealized)}
+          loading={snaps.isLoading}
+        />
+        <KpiCard
+          label="Realized P&L"
+          primary={realized != null ? fmtMoney(realized) : '—'}
+          tone={tone(realized)}
+          loading={summary.isLoading}
+        />
+      </div>
+
+      {/* Equity curve */}
+      <section className="card">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+            Equity curve
+          </h2>
+          {snaps.data && snaps.data.snapshots.length > 0 && (
+            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+              {snaps.data.snapshots.length} snapshots ·{' '}
+              {snaps.data.snapshots[0].date} → {snaps.data.snapshots.at(-1)?.date}
+            </span>
+          )}
+        </div>
+        {snaps.isLoading ? (
+          <div className="skeleton h-72" />
+        ) : visibleSnaps.length >= 2 ? (
+          <EquityCurve snapshots={visibleSnaps} height={300} />
+        ) : (
+          <NoSnapshots
+            onGenerate={() => generateSnapshots.mutate()}
+            loading={generateSnapshots.isPending}
+            error={generateSnapshots.error?.message}
           />
-          <Stat label="Transactions" value={String(summary.data.tx_count)} />
-        </div>
-      )}
+        )}
+      </section>
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold">Top holdings (cost basis)</h2>
-          <a href="/holdings" className="text-xs text-zinc-400 hover:text-zinc-100">
-            view all →
-          </a>
-        </div>
-        {holdings.isLoading && <p className="text-zinc-500 text-sm">loading…</p>}
-        {holdings.data && holdings.data.length === 0 && (
-          <p className="text-zinc-500 text-sm">
-            No holdings yet. Add transactions on the{' '}
-            <a href="/transactions" className="text-blue-400 hover:underline">
-              Transactions
-            </a>{' '}
-            page.
-          </p>
-        )}
-        {holdings.data && holdings.data.length > 0 && (
-          <table className="w-full text-sm">
-            <thead className="text-zinc-400">
-              <tr className="border-b border-zinc-800">
-                <th className="text-left py-1.5">Symbol</th>
-                <th className="text-left">Type</th>
-                <th className="text-right">Qty</th>
-                <th className="text-right">Avg cost</th>
-                <th className="text-right">Cost basis</th>
-                <th className="text-right">Cur</th>
-              </tr>
-            </thead>
-            <tbody>
-              {holdings.data
-                .slice()
-                .sort((a, b) => Number(b.total_cost) - Number(a.total_cost))
-                .slice(0, 5)
-                .map(h => (
-                  <tr key={`${h.symbol}-${h.asset_type}`} className="border-b border-zinc-900">
-                    <td className="py-1.5 font-medium">
-                      <Link to={`/asset/${encodeURIComponent(h.symbol)}/${h.asset_type}`}
-                            className="text-blue-400 hover:underline">
-                        {h.symbol}
-                      </Link>
-                    </td>
-                    <td className="text-zinc-400">{h.asset_type}</td>
-                    <td className="text-right tabular-nums">{fmtQty(h.quantity)}</td>
-                    <td className="text-right tabular-nums">{fmtPrice(h.avg_cost)}</td>
-                    <td className="text-right">{fmtMoney(h.total_cost)}</td>
-                    <td className="text-right text-zinc-400">{h.currency}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        )}
+      {/* Top movers + Top holdings + Recent activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <TopMoversCard holdings={holdings.data ?? []} loading={holdings.isLoading} />
+        <TopHoldingsCard
+          holdings={holdings.data ?? []}
+          loading={holdings.isLoading}
+          sparklines={sparks.data?.series ?? {}}
+        />
+        <ActivityCard summary={summary.data} loading={summary.isLoading} />
       </div>
     </div>
   )
 }
 
-function Stat(props: { label: string; value: string; pnl?: string }) {
+// -----------------------------------------------------------------------------
+
+function tone(v: number | null | undefined): 'gain' | 'loss' | undefined {
+  if (v == null) return undefined
+  if (v > 0) return 'gain'
+  if (v < 0) return 'loss'
+  return undefined
+}
+
+function deltaPct(snaps: { date: string; total_value: string }[], lookbackDays: number): number | null {
+  if (snaps.length < 2) return null
+  const last = snaps[snaps.length - 1]
+  // Find a snapshot at-or-before (last.date - lookbackDays).
+  const target = new Date(last.date)
+  target.setDate(target.getDate() - lookbackDays)
+  const targetIso = target.toISOString().slice(0, 10)
+  let baseline = snaps[0]
+  for (let i = snaps.length - 1; i >= 0; i--) {
+    if (snaps[i].date <= targetIso) { baseline = snaps[i]; break }
+  }
+  const a = Number(baseline.total_value)
+  const b = Number(last.total_value)
+  if (a <= 0) return null
+  return (b - a) / a
+}
+
+function KpiCard({
+  label, primary, deltas, tone, loading,
+}: {
+  label: string
+  primary: string
+  deltas?: [string, number | null][]
+  tone?: 'gain' | 'loss'
+  loading?: boolean
+}) {
   return (
     <div className="card">
-      <div className="text-xs text-zinc-400 uppercase tracking-wide">{props.label}</div>
-      <div className={`text-2xl font-bold mt-1 ${pnlClass(props.pnl)}`}>{props.value}</div>
+      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
+        {label}
+      </div>
+      {loading ? (
+        <div className="skeleton h-7 w-32 mt-2" />
+      ) : (
+        <div
+          className="text-2xl font-bold mt-1 tabular-nums"
+          style={{ color: tone ? `var(--${tone})` : 'var(--text-primary)' }}
+        >
+          {primary}
+        </div>
+      )}
+      {deltas && deltas.length > 0 && !loading && (
+        <div className="flex gap-3 mt-2 text-xs">
+          {deltas.map(([k, v]) => (
+            <span key={k}>
+              <span style={{ color: 'var(--text-tertiary)' }}>{k}:</span>{' '}
+              <span
+                className="tabular-nums"
+                style={{
+                  color: v == null ? 'var(--text-tertiary)'
+                       : v > 0 ? 'var(--gain)'
+                       : v < 0 ? 'var(--loss)'
+                       : 'var(--text-secondary)',
+                }}
+              >
+                {v == null ? '—' : `${pnlSign(v)}${fmtPct(v)}`}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NoSnapshots({
+  onGenerate, loading, error,
+}: { onGenerate: () => void; loading: boolean; error?: string }) {
+  return (
+    <div
+      className="rounded-lg p-8 flex flex-col items-center justify-center text-center gap-3"
+      style={{
+        border: '1px dashed var(--border-base)',
+        color: 'var(--text-secondary)',
+        minHeight: 240,
+      }}
+    >
+      <div className="text-4xl">📈</div>
+      <p className="max-w-md text-sm">
+        No snapshots yet. Generate the daily portfolio history (last 365 days)
+        to see the equity curve and the time-series metrics on the
+        Performance page.
+      </p>
+      <button onClick={onGenerate} disabled={loading} className="btn-primary">
+        {loading ? 'Generating…' : 'Generate snapshots (365d)'}
+      </button>
+      {error && (
+        <p className="text-xs" style={{ color: 'var(--loss)' }}>
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function TopMoversCard({
+  holdings, loading,
+}: { holdings: { symbol: string; asset_type: string; unrealized_pnl_pct?: number | null }[]; loading: boolean }) {
+  const movers = holdings
+    .filter(h => h.unrealized_pnl_pct != null)
+    .map(h => ({
+      symbol: h.symbol,
+      asset_type: h.asset_type,
+      pct: h.unrealized_pnl_pct as number,
+    }))
+    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+    .slice(0, 5)
+
+  return (
+    <div className="card">
+      <h2 className="font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+        Top movers
+      </h2>
+      {loading ? (
+        <div className="skeleton h-40" />
+      ) : movers.length === 0 ? (
+        <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+          no priced positions yet
+        </p>
+      ) : (
+        <ul className="space-y-1.5 text-sm">
+          {movers.map(m => {
+            const up = m.pct >= 0
+            return (
+              <li key={`${m.symbol}-${m.asset_type}`} className="flex items-center justify-between">
+                <Link
+                  to={`/asset/${encodeURIComponent(m.symbol)}/${m.asset_type}`}
+                  className="font-medium"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  <span style={{ color: up ? 'var(--gain)' : 'var(--loss)' }}>
+                    {up ? '▲' : '▼'}
+                  </span>{' '}
+                  {m.symbol}
+                </Link>
+                <span
+                  className="tabular-nums"
+                  style={{ color: up ? 'var(--gain)' : 'var(--loss)' }}
+                >
+                  {pnlSign(m.pct)}{fmtPct(m.pct)}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function TopHoldingsCard({
+  holdings, sparklines, loading,
+}: {
+  holdings: { symbol: string; asset_type: string; quantity: string; total_cost: string; market_value?: string | null }[]
+  sparklines: Record<string, Array<{ time: string; close: string }>>
+  loading: boolean
+}) {
+  const top = holdings
+    .slice()
+    .sort((a, b) => Number(b.market_value ?? b.total_cost) - Number(a.market_value ?? a.total_cost))
+    .slice(0, 5)
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Top holdings
+        </h2>
+        <Link to="/holdings" className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          view all →
+        </Link>
+      </div>
+      {loading ? (
+        <div className="skeleton h-40" />
+      ) : top.length === 0 ? (
+        <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+          no holdings yet — import a PDF or add a transaction
+        </p>
+      ) : (
+        <ul className="space-y-2 text-sm">
+          {top.map(h => (
+            <li
+              key={`${h.symbol}-${h.asset_type}`}
+              className="flex items-center justify-between gap-2"
+            >
+              <Link
+                to={`/asset/${encodeURIComponent(h.symbol)}/${h.asset_type}`}
+                className="font-medium shrink-0"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                {h.symbol}
+              </Link>
+              <div className="flex-1 mx-2 max-w-[120px]">
+                <Sparkline points={sparklines[h.symbol] ?? []} height={20} />
+              </div>
+              <span className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                {fmtQty(h.quantity)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function ActivityCard({
+  summary, loading,
+}: {
+  summary?: { tx_count: number; open_lot_count: number; match_count: number }
+  loading: boolean
+}) {
+  return (
+    <div className="card">
+      <h2 className="font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+        Activity
+      </h2>
+      {loading ? (
+        <div className="skeleton h-32" />
+      ) : !summary ? (
+        <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>—</p>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+          <dt style={{ color: 'var(--text-secondary)' }}>Transactions</dt>
+          <dd className="text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>
+            {summary.tx_count}
+          </dd>
+          <dt style={{ color: 'var(--text-secondary)' }}>Open lots</dt>
+          <dd className="text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>
+            {summary.open_lot_count}
+          </dd>
+          <dt style={{ color: 'var(--text-secondary)' }}>Realized matches</dt>
+          <dd className="text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>
+            {summary.match_count}
+          </dd>
+        </dl>
+      )}
     </div>
   )
 }

@@ -73,19 +73,23 @@ def latest_close_many(
     return out
 
 
+DAILY_INTERVALS = ("1day", "1d")
+
+
 def history(
     symbol: str,
     asset_type: str,
     start: datetime | None = None,
     end: datetime | None = None,
-    interval: str | None = None,
+    interval: str | list[str] | None = None,
     limit: int = 5000,
 ) -> list[dict]:
     """OHLCV history for one (symbol, asset_type), oldest first.
 
-    - `interval` filters to a specific candle resolution (e.g. '1day'). When
-      None, the highest-resolution daily-or-coarser bar wins per timestamp;
-      the route preferring 'daily' should pass interval explicitly.
+    - `interval` accepts a single string (e.g. '1day') or a list when callers
+      need to be tolerant of source-specific aliases (Twelve Data emits
+      '1day', Binance/CoinGecko '1d'). When None, no interval filter is
+      applied — useful for an asset that only has coarse bars.
     - `limit` caps the row count to avoid blowing up the API response.
     """
     where = ["symbol = %s", "asset_type = %s"]
@@ -97,8 +101,13 @@ def history(
         where.append("time <= %s")
         params.append(end)
     if interval is not None:
-        where.append("interval = %s")
-        params.append(interval)
+        if isinstance(interval, str):
+            where.append("interval = %s")
+            params.append(interval)
+        else:
+            placeholders = ",".join(["%s"] * len(interval))
+            where.append(f"interval IN ({placeholders})")
+            params.extend(interval)
 
     sql = f"""
     SELECT time, open, high, low, close, volume, interval
