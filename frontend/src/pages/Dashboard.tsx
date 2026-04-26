@@ -74,9 +74,23 @@ export default function Dashboard() {
   const unrealized = latest ? Number(latest.unrealized_pnl) : null
   const realized   = summary.data ? Number(summary.data.realized_pnl) : null
 
-  const dlt1 = deltaPct(snaps.data?.snapshots ?? [], 1, baseAvailable)
-  const dlt7 = deltaPct(snaps.data?.snapshots ?? [], 7, baseAvailable)
-  const dlt365 = deltaPct(snaps.data?.snapshots ?? [], 365, baseAvailable)
+  const heroDeltas = useMemo<[string, number | null][]>(() => {
+    const snapsArr = snaps.data?.snapshots ?? []
+    if (snapsArr.length === 0) return []
+    const items: [string, number | null][] = []
+    // 1d is always shown — the user wants to know "what did today do".
+    items.push(['1d', deltaPct(snapsArr, 1, baseAvailable)])
+    // Second slot mirrors the active PeriodSelector. For 1W that's just
+    // 7d (no need to repeat); other periods get an anchored "since X"
+    // calculation so YTD really starts on Jan 01, etc.
+    if (period === '1W') {
+      items.push(['7d', deltaPct(snapsArr, 7, baseAvailable)])
+    } else {
+      items.push(['7d', deltaPct(snapsArr, 7, baseAvailable)])
+      items.push([period, deltaPctSince(snapsArr, start, baseAvailable)])
+    }
+    return items
+  }, [snaps.data, period, start, baseAvailable])
 
   return (
     <div className="space-y-6">
@@ -92,7 +106,7 @@ export default function Dashboard() {
         <KpiCard
           label={baseAvailable ? `Portfolio value (${baseCcy})` : 'Portfolio value (mixed)'}
           primary={totalValue != null ? fmtMoney(totalValue) : '—'}
-          deltas={latest ? [['1d', dlt1], ['7d', dlt7], ['1Y', dlt365]] : []}
+          deltas={latest ? heroDeltas : []}
           loading={snaps.isLoading}
           caveat={!baseAvailable && latest != null
             ? 'mixed currencies — run `pt sync fx`'
@@ -178,8 +192,10 @@ function tone(v: number | null | undefined): 'gain' | 'loss' | undefined {
   return undefined
 }
 
+type DeltaSnap = { date: string; total_value: string; total_value_base: string | null }
+
 function deltaPct(
-  snaps: { date: string; total_value: string; total_value_base: string | null }[],
+  snaps: DeltaSnap[],
   lookbackDays: number,
   preferBase = false,
 ): number | null {
@@ -189,9 +205,43 @@ function deltaPct(
   const target = new Date(last.date)
   target.setDate(target.getDate() - lookbackDays)
   const targetIso = target.toISOString().slice(0, 10)
+  return computeDelta(snaps, targetIso, last, preferBase)
+}
+
+/**
+ * Same delta math as `deltaPct` but anchored to a calendar date instead of
+ * a numeric lookback. Powers period-aware Hero deltas so e.g. YTD really
+ * means "from Jan 01 of the current year" rather than "the last 365 days".
+ *
+ * `sinceIso = null` (PeriodSelector returns null for ALL) compares to the
+ * very first snapshot in the series.
+ */
+function deltaPctSince(
+  snaps: DeltaSnap[],
+  sinceIso: string | null,
+  preferBase = false,
+): number | null {
+  if (snaps.length < 2) return null
+  const last = snaps[snaps.length - 1]
+  // For ALL → anchor to the earliest snapshot so the user sees lifetime change.
+  if (sinceIso == null) {
+    return computeDelta(snaps, snaps[0].date, last, preferBase)
+  }
+  return computeDelta(snaps, sinceIso, last, preferBase)
+}
+
+function computeDelta(
+  snaps: DeltaSnap[],
+  baselineCutoffIso: string,
+  last: DeltaSnap,
+  preferBase: boolean,
+): number | null {
+  // Pick the snapshot at-or-before the cutoff (mirrors the ECharts
+  // visibleSnaps slice: any snapshot >= start is "in the window", so the
+  // first one in-window approximates the period's opening level).
   let baseline = snaps[0]
   for (let i = snaps.length - 1; i >= 0; i--) {
-    if (snaps[i].date <= targetIso) { baseline = snaps[i]; break }
+    if (snaps[i].date <= baselineCutoffIso) { baseline = snaps[i]; break }
   }
   // Use FX-converted values when both endpoints have them (apples-to-apples
   // across the lookback window). Otherwise fall back to FX-naive.
