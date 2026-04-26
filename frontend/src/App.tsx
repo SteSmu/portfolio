@@ -7,6 +7,7 @@ import Holdings from './pages/Holdings'
 import Performance from './pages/Performance'
 import Settings from './pages/Settings'
 import Transactions from './pages/Transactions'
+import YearInReview from './pages/YearInReview'
 
 export default function App() {
   return (
@@ -19,6 +20,8 @@ export default function App() {
         <Route path="transactions" element={<Transactions />} />
         <Route path="settings" element={<Settings />} />
         <Route path="asset/:symbol/:assetType" element={<AssetDetail />} />
+        <Route path="year/:year" element={<YearInReview />} />
+        <Route path="year" element={<YearInReview />} />
       </Route>
     </Routes>
   )
