@@ -32,7 +32,7 @@ def _root(
 
 
 # Sub-apps registered here as phases land.
-from pt import cli_asset, cli_db, cli_holdings, cli_portfolio, cli_sync, cli_tx
+from pt import cli_asset, cli_db, cli_holdings, cli_perf, cli_portfolio, cli_sync, cli_tx
 
 app.add_typer(cli_db.app, name="db")
 app.add_typer(cli_portfolio.app, name="portfolio")
@@ -40,6 +40,7 @@ app.add_typer(cli_tx.app, name="tx")
 app.add_typer(cli_holdings.app, name="holdings")
 app.add_typer(cli_asset.app, name="asset")
 app.add_typer(cli_sync.app, name="sync")
+app.add_typer(cli_perf.app, name="perf")
 
 
 if __name__ == "__main__":
