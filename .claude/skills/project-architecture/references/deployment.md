@@ -11,6 +11,7 @@ the FastAPI container; the API is internal-only by default.
 | `pt-timescaledb` | `timescale/timescaledb:latest-pg16` | (upstream) | internal `5432` | volume `pt_db_data` survives |
 | `pt-api` | `portfolio-api:latest` | [`Dockerfile`](../../Dockerfile) | internal `8430` | stateless |
 | `pt-frontend` | `portfolio-frontend:latest` | [`frontend/Dockerfile`](../../frontend/Dockerfile) | host `:5174 → 80` | stateless |
+| `pt-cron` | `portfolio-api:latest` (re-used) | — | none (sidecar) | stateless — fires `pt sync daily` once per day at `PT_CRON_HOUR_UTC` (default 06 UTC) |
 
 Bring up: `docker compose -f docker-compose.prod.yml up -d --build`
 Reset everything (drops the volume!): `docker compose -f docker-compose.prod.yml down -v`
@@ -64,6 +65,41 @@ changes the columns we depend on.
   `X-Forwarded-For`, `X-Forwarded-Proto` set
 - catch-all `try_files $uri $uri/ /index.html` for SPA routing
 - `access_log off` on `/api/health` to keep logs tidy
+
+## Daily cron sidecar (`pt-cron`)
+
+[`docker-compose.prod.yml:cron`](../../docker-compose.prod.yml) runs once a
+day to keep market data fresh without manual `pt sync ...` invocations.
+
+- **Image**: re-uses `portfolio-api:latest` so there's no second build to
+  maintain; the `pt` CLI is on `$PATH` via the project's
+  `[project.scripts]` entry point.
+- **Schedule**: pure shell loop, sleeps until next `PT_CRON_HOUR_UTC:00`
+  (default `06`). One run per 24h. Override via `.env`:
+  `PT_CRON_HOUR_UTC=4` → 04:00 UTC.
+- **What it runs**: `pt sync daily` →
+  [`pt/jobs/daily.py:run`](../../pt/jobs/daily.py).
+  - `_step_fx`: Frankfurter latest rates (EUR base).
+  - `_step_auto_prices`: per active portfolio, calls
+    [`pt.api.routes.sync.sync_portfolio_prices`](../../pt/api/routes/sync.py)
+    with `days=5` (cheap, idempotent — TimescaleDB primary key swallows
+    duplicates).
+  - `_step_benchmarks`: every entry of `pt.jobs.benchmarks.BENCHMARKS`
+    gets `ensure_history(days=5)`.
+  - `_step_snapshots`: today's `write_today` for every active portfolio.
+- **Failure handling**: each step is wrapped in try/except. One failing
+  step doesn't abort the others; the orchestrator returns
+  `ok: False` + per-step error and exits non-zero. `docker logs pt-cron`
+  surfaces the JSON line for debugging.
+- **First-time setup on a fresh prod DB**: after `docker compose up`,
+  run `docker exec pt-api pt db migrate` to apply any post-bootstrap
+  schema additions (the volume's first-start init only ships the
+  `02_portfolio_schema.sql` snapshot from compose-up time — later schema
+  changes need an explicit migrate). Smoke-test the orchestration via
+  `docker exec pt-cron pt sync daily` (forces an immediate run instead
+  of waiting until 06:00 UTC).
+- **Manual trigger** (any time): `docker exec pt-cron pt sync daily`.
+- **Disable**: `docker compose -f docker-compose.prod.yml stop cron`.
 
 ## CI
 

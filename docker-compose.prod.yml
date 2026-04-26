@@ -79,6 +79,55 @@ services:
     ports:
       - "${PT_FRONTEND_PORT:-5174}:80"
 
+  # ---------------------------------------------------------------------------
+  # Daily cron sidecar — refreshes FX, prices, benchmark candles, snapshots.
+  # Reuses the same image as `api` (pt CLI is installed via pyproject.toml's
+  # [project.scripts]). Loops with a sleep-until-next-target time so we don't
+  # need a real crond. Override the schedule with `PT_CRON_HOUR_UTC` (default
+  # 06 — early-morning UTC means EU users see fresh data by breakfast and
+  # Frankfurter has published the day's ECB rates).
+  cron:
+    image: portfolio-api:latest
+    container_name: pt-cron
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PT_DB_HOST: pt-timescaledb
+      PT_DB_PORT: "5432"
+      PT_DB_NAME: ${PT_DB_NAME:-claude_trader}
+      PT_DB_USER: ${PT_DB_USER:-trader}
+      PT_DB_PASSWORD: ${PT_DB_PASSWORD:-trader_dev_2024}
+      PT_DB_SCHEMA: ${PT_DB_SCHEMA:-portfolio}
+      PT_LOG_FORMAT: json
+      PT_LOG_LEVEL: INFO
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      MARKETAUX_API_KEY: ${MARKETAUX_API_KEY:-}
+      PT_CRON_HOUR_UTC: ${PT_CRON_HOUR_UTC:-6}
+    entrypoint: ["/bin/sh", "-c"]
+    # `$$` escapes a literal $ for docker-compose (so the runtime shell sees
+    # `$VAR`, not the compose-time value). The hour read happens in the
+    # container shell so PT_CRON_HOUR_UTC override at runtime works.
+    command: |
+      'while true; do
+        target_hour=$${PT_CRON_HOUR_UTC:-6}
+        now_h=$$(date -u +%H)
+        now_h=$${now_h#0}
+        now_m=$$(date -u +%M)
+        now_m=$${now_m#0}
+        diff=$$(( (24 + target_hour - now_h) % 24 ))
+        if [ "$$diff" -eq 0 ] && [ "$$now_m" -gt 0 ]; then diff=24; fi
+        sleep_secs=$$(( diff * 3600 - now_m * 60 ))
+        if [ "$$sleep_secs" -le 0 ]; then sleep_secs=86400; fi
+        echo "[pt-cron] next run in $$sleep_secs s (target $${target_hour}:00 UTC)"
+        sleep "$$sleep_secs"
+        echo "[pt-cron] running pt sync daily"
+        pt sync daily --json || echo "[pt-cron] daily run failed (exit $$?)"
+      done'
+
 volumes:
   pt_db_data:
     name: pt_db_data

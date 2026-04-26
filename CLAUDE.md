@@ -128,6 +128,11 @@ pt perf summary -p 1
   `pt/insights/llm.py` + `outlook.py` are dormant scaffolding — don't
   wire them into live paths without checking the user's preference
   memory at `~/.claude/projects/-Users-stefan-.../portfolio/memory/`.
+- **Daily data refresh on prod runs in `pt-cron` sidecar.** `pt sync daily`
+  fires once at `PT_CRON_HOUR_UTC` (default `06`) and orchestrates
+  FX → auto-prices → benchmarks → snapshots. Idempotent UPSERTs all the
+  way down — re-running on the same day is safe. Manual trigger:
+  `docker exec pt-cron pt sync daily`. Logs: `docker logs pt-cron`.
 - Per-user / per-machine config in `.env` (gitignored). Defaults in
   `.env.example`.
 

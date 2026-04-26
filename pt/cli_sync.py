@@ -7,6 +7,7 @@ Examples:
   pt sync stock AAPL --interval 1day --outputsize 365
   pt sync snapshots                         # today's snapshot for every active portfolio
   pt sync snapshots -p 1 --backfill 365    # rebuild last 365 days of snapshots for portfolio #1
+  pt sync daily                             # full orchestrated daily run (cron entry-point)
   pt sync --json fx                         # machine-readable result
 
 Each command is idempotent (upsert on time+symbol+interval, or on the
@@ -28,6 +29,7 @@ from pt.data import coingecko as _cg
 from pt.data import frankfurter as _fx
 from pt.data import store as _store
 from pt.data import twelve_data as _td
+from pt.jobs import daily as _daily
 from pt.jobs import snapshots as _snap
 
 app = typer.Typer(help="Refresh market data (prices, FX) into TimescaleDB.",
@@ -206,3 +208,53 @@ def cmd_snapshots(
                 f"[{s['from']} → {s['to']}], latest total_value={s['total_value']}, "
                 f"holdings={s['holdings_count']}"
             )
+
+
+@app.command("daily")
+def cmd_daily(
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Full orchestrated daily run — used by the pt-cron sidecar.
+
+    Order: FX rates → auto-prices per portfolio → benchmark candles →
+    today's snapshots. Each step is independent — one failure doesn't
+    abort the others. Idempotent: every step UPSERTs (FX, candles,
+    snapshots) so re-running on the same day is safe.
+
+    Exit codes: 0 = all green, 1 = at least one step had an error
+    (cron picks this up via $? for monitoring / email-on-failure).
+    """
+    result = _daily.run()
+    if json_output:
+        print(json.dumps(result, default=str))
+    else:
+        steps = result["steps"]
+        fx = steps["fx"]
+        ap = steps["auto_prices"]
+        bm = steps["benchmarks"]
+        sn = steps["snapshots"]
+        console.print(f"[bold]Daily sync[/bold] · {result['portfolios']} active portfolio(s)")
+        console.print(
+            f"  fx          {'[green]✓[/green]' if fx.get('ok') else '[red]✗[/red]'} "
+            f"{fx.get('rows_written', 0)} rate(s)"
+            + (f" · {fx.get('error')}" if fx.get('error') else "")
+        )
+        console.print(
+            f"  auto-prices {'[green]✓[/green]' if ap.get('ok') else '[red]✗[/red]'} "
+            f"{ap.get('rows_written', 0)} candle(s) across {ap.get('portfolios', 0)} portfolio(s)"
+        )
+        for r in ap.get("results", []):
+            mark = "[green]✓[/green]" if r.get("ok") else "[red]✗[/red]"
+            failures = r.get("failures") or []
+            extra = f" — {len(failures)} symbol failure(s)" if failures else ""
+            console.print(f"    · #{r['portfolio_id']} {mark} {r.get('rows_written', 0)} candle(s){extra}")
+        console.print(
+            f"  benchmarks  {'[green]✓[/green]' if bm.get('ok') else '[red]✗[/red]'} "
+            f"{bm.get('rows_written', 0)} candle(s) across {bm.get('benchmarks', 0)} ticker(s)"
+        )
+        console.print(
+            f"  snapshots   {'[green]✓[/green]' if sn.get('ok') else '[red]✗[/red]'} "
+            f"{len(sn.get('results', []))} portfolio(s)"
+        )
+    if not result.get("ok"):
+        raise typer.Exit(1)
