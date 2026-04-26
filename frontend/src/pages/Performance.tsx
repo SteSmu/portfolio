@@ -7,6 +7,9 @@ import EmptyPortfolio from '../components/EmptyPortfolio'
 import EquityCurve from '../components/charts/EquityCurve'
 import DrawdownChart from '../components/charts/DrawdownChart'
 import PeriodSelector, { type Period, periodStart } from '../components/PeriodSelector'
+import BenchmarkPicker from '../components/BenchmarkPicker'
+import { useBenchmark } from '../state/benchmark'
+import { useBenchmarkOverlay } from '../lib/benchmark'
 
 const METHODS = ['fifo', 'lifo', 'average'] as const
 type Method = (typeof METHODS)[number]
@@ -46,6 +49,8 @@ export default function Performance() {
     if (!start) return snaps.data.snapshots
     return snaps.data.snapshots.filter(s => s.date >= start)
   }, [snaps.data, start])
+  const { selected: benchmarkSel } = useBenchmark()
+  const benchmarkOverlay = useBenchmarkOverlay(benchmarkSel, visibleSnaps)
 
   const ts = summary.data?.timeseries ?? null
 
@@ -130,12 +135,13 @@ export default function Performance() {
               </p>
             )}
           </div>
+          <BenchmarkPicker />
         </div>
         {snaps.isLoading ? (
           <div className="skeleton h-72" />
         ) : visibleSnaps.length >= 2 ? (
           <div className="space-y-3">
-            <EquityCurve snapshots={visibleSnaps} height={260} />
+            <EquityCurve snapshots={visibleSnaps} height={260} benchmark={benchmarkOverlay} />
             <DrawdownChart snapshots={visibleSnaps} height={140} />
           </div>
         ) : (

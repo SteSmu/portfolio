@@ -2,19 +2,43 @@ import type { EChartsOption } from 'echarts'
 import type { Snapshot } from '../../api/client'
 import Chart from './Chart'
 
+export type BenchmarkOverlay = {
+  /** Display name shown in the legend, e.g. "S&P 500 (SPY)". */
+  name: string
+  /** Already-normalized series, oldest first: `[isoDate, value-in-portfolio-units]`. */
+  series: Array<[string, number]>
+}
+
 type Props = {
   snapshots: Snapshot[]
   height?: number
   showCostBasis?: boolean
+  /**
+   * Optional benchmark overlay. The wrapper does NOT do the normalization —
+   * compute `factor = first_total_value / first_benchmark_close` in the
+   * parent and pass the scaled close-prices here. See [charts.md] for the
+   * canonical pattern. This keeps EquityCurve agnostic to whatever
+   * snapshot the parent considers "first".
+   */
+  benchmark?: BenchmarkOverlay | null
 }
 
 /**
  * Equity curve: total portfolio value over time, with the running cost-basis
  * as a dashed reference line. The gap between them is unrealized P&L.
  *
+ * When `benchmark` is supplied, a third line renders in the categorical
+ * benchmark colour (`var(--cat-3)`) with the benchmark's display name in
+ * the legend. The series is already normalized — see Props doc.
+ *
  * Snapshots are expected oldest-first (the API returns them that way).
  */
-export default function EquityCurve({ snapshots, height = 300, showCostBasis = true }: Props) {
+export default function EquityCurve({
+  snapshots,
+  height = 300,
+  showCostBasis = true,
+  benchmark = null,
+}: Props) {
   if (snapshots.length === 0) {
     return (
       <div
@@ -73,6 +97,16 @@ export default function EquityCurve({ snapshots, height = 300, showCostBasis = t
             showSymbol: false,
             lineStyle: { width: 1.5, type: 'dashed' as const },
             data: costSeries,
+          }]
+        : []),
+      ...(benchmark && benchmark.series.length > 0
+        ? [{
+            name: benchmark.name,
+            type: 'line' as const,
+            showSymbol: false,
+            lineStyle: { width: 1.5, color: 'var(--cat-3)' },
+            itemStyle: { color: 'var(--cat-3)' },
+            data: benchmark.series,
           }]
         : []),
     ],

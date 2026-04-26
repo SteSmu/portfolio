@@ -8,6 +8,9 @@ import EmptyPortfolio from '../components/EmptyPortfolio'
 import EquityCurve from '../components/charts/EquityCurve'
 import Sparkline from '../components/charts/Sparkline'
 import PeriodSelector, { type Period, periodStart } from '../components/PeriodSelector'
+import BenchmarkPicker from '../components/BenchmarkPicker'
+import { useBenchmark } from '../state/benchmark'
+import { useBenchmarkOverlay } from '../lib/benchmark'
 
 export default function Dashboard() {
   const { activeId } = useActivePortfolio()
@@ -15,6 +18,7 @@ export default function Dashboard() {
 
   const [period, setPeriod] = useState<Period>('3M')
   const start = useMemo(() => periodStart(period), [period])
+  const { selected: benchmarkSel } = useBenchmark()
 
   const summary = useQuery({
     queryKey: ['perf-summary', activeId],
@@ -54,6 +58,7 @@ export default function Dashboard() {
     if (!start) return snaps.data.snapshots
     return snaps.data.snapshots.filter(s => s.date >= start)
   }, [snaps.data, start])
+  const benchmarkOverlay = useBenchmarkOverlay(benchmarkSel, visibleSnaps)
 
   const totalValue = latest ? Number(latest.total_value) : null
   const costBasis  = latest ? Number(latest.total_cost_basis) : null
@@ -103,9 +108,12 @@ export default function Dashboard() {
       {/* Equity curve */}
       <section className="card">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
-            Equity curve
-          </h2>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Equity curve
+            </h2>
+            <BenchmarkPicker />
+          </div>
           {snaps.data && snaps.data.snapshots.length > 0 && (
             <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
               {snaps.data.snapshots.length} snapshots ·{' '}
@@ -116,7 +124,7 @@ export default function Dashboard() {
         {snaps.isLoading ? (
           <div className="skeleton h-72" />
         ) : visibleSnaps.length >= 2 ? (
-          <EquityCurve snapshots={visibleSnaps} height={300} />
+          <EquityCurve snapshots={visibleSnaps} height={300} benchmark={benchmarkOverlay} />
         ) : (
           <NoSnapshots
             onGenerate={() => generateSnapshots.mutate()}

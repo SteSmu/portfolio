@@ -18,6 +18,7 @@ never math's it).
 | [`sync.py`](../../pt/api/routes/sync.py) | `/sync` | `POST /fx`, `POST /crypto`, `POST /stock`, `POST /portfolio/{id}/auto-prices` |
 | [`news.py`](../../pt/api/routes/news.py) | `/news` | `GET /{symbol}/{type}`, `POST /sync` |
 | [`imports.py`](../../pt/api/routes/imports.py) | `/portfolios/{id}/import` | `POST /pdf` (multipart, `?dry_run=bool`) — see [pdf-import.md](pdf-import.md) |
+| [`benchmarks.py`](../../pt/api/routes/benchmarks.py) | `/benchmarks` | `GET /` (curated whitelist), `POST /{symbol}/sync?days=N` (idempotent candle backfill via TD→Yahoo fallback). Frontend overlays on the equity curve, normalised start-aligned. |
 
 Plus `GET /api/health` (in `app.py`) returning status + version + DB
 latency + per-table counts.

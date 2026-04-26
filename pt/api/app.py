@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pt import __version__
 from pt.api.middleware import RequestLogMiddleware, install_logging_filter
 from pt.api.routes.assets import router as assets_router
+from pt.api.routes.benchmarks import router as benchmarks_router
 from pt.api.routes.holdings import router as holdings_router
 from pt.api.routes.imports import router as imports_router
 from pt.api.routes.news import router as news_router
@@ -58,6 +59,7 @@ app.include_router(snapshots_router, prefix=API_PREFIX)
 app.include_router(sync_router, prefix=API_PREFIX)
 app.include_router(news_router, prefix=API_PREFIX)
 app.include_router(imports_router, prefix=API_PREFIX)
+app.include_router(benchmarks_router, prefix=API_PREFIX)
 
 
 @app.get("/api/health")

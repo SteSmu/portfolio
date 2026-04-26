@@ -90,6 +90,39 @@ theme bridge re-derives all colours when the toggle fires.
    `echarts.init` directly outside `Chart.tsx`, otherwise the chart
    loses theme-switch handling and the resize observer.
 
+## Benchmark overlay normalisation
+
+Pattern used by `EquityCurve`'s `benchmark` prop (Dashboard + Performance):
+
+1. Pull benchmark candles via `api.listCandles(symbol, asset_type)` —
+   no dedicated endpoint, candles are already keyed off `(symbol,
+   asset_type)` in `public.candles`.
+2. **Trim to the snapshot window** (`candle.time >= visibleSnaps[0].date`).
+   Without this, the benchmark line predates the portfolio's first
+   snapshot and skews the visual comparison.
+3. **Start-aligned ratio scale**:
+   `factor = first_visible_snapshot.total_value / first_in-window_close`,
+   then `scaled_close = close * factor` per point. The first plotted
+   benchmark point therefore equals the portfolio's starting value, and
+   subsequent points encode relative performance only — outperformance
+   shows as the benchmark line drifting below the equity curve, and
+   vice versa.
+4. The wrapper (`EquityCurve.tsx`) is intentionally normalisation-agnostic
+   — the parent (`Dashboard`/`Performance`) feeds an already-scaled
+   `series: Array<[isoDate, number]>`. The shared hook is
+   [`lib/benchmark.ts:useBenchmarkOverlay`](../../frontend/src/lib/benchmark.ts).
+5. **Edge case — fewer snapshots than benchmark history.** When the user
+   has only e.g. 30 snapshots but synced 365d of SPY, the trim step
+   (#2) discards the SPY history before the 30-day window. The line
+   appears short, anchored at the same start point as the equity
+   curve, never extending past the portfolio's actual lifetime.
+6. **Edge case — fewer benchmark candles than snapshots.** If the user
+   selected a benchmark and never ran `POST /api/benchmarks/{symbol}/sync`,
+   the candle history is empty and the overlay returns
+   `{name, series: []}` — `EquityCurve` simply omits the line. No error,
+   no implicit fetch — the picker / a future explicit "sync" button is
+   the place to trigger backfill.
+
 ## Gotchas
 
 - **lightweight-charts v5 ≠ v4.** v4 used `chart.addLineSeries()`; v5

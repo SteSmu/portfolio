@@ -324,6 +324,14 @@ export const api = {
       `/portfolios/${portfolioId}/holdings/sparklines?days=${days}`,
     ),
 
+  // Benchmarks (curated whitelist + on-demand history sync)
+  listBenchmarks: () => request<Benchmark[]>('/benchmarks'),
+  syncBenchmark: (symbol: string, days = 365) =>
+    request<BenchmarkSyncResponse>(
+      `/benchmarks/${encodeURIComponent(symbol)}/sync?days=${days}`,
+      { method: 'POST' },
+    ),
+
   // News
   listNews: (symbol: string, assetType: string, limit = 30) =>
     request<NewsResponse>(`/news/${symbol}/${assetType}?limit=${limit}`),
@@ -397,6 +405,25 @@ export type ImportPdfResult = {
   cash_parsed: number
   warnings: string[]
   skipped_reason: string | null
+}
+
+export type Benchmark = {
+  symbol: string
+  asset_type: string
+  display_name: string
+  region: string
+}
+
+export type BenchmarkSyncResponse = {
+  ok: boolean
+  symbol: string
+  asset_type: string
+  source: string
+  twelve_data_error?: string | null
+  rows_written: number
+  /** Decimal serialized as JSON string; null if no candle is yet stored. */
+  last_close: string | null
+  last_price_at: string | null
 }
 
 export type NewsItem = {
