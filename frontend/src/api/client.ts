@@ -42,6 +42,28 @@ export type Holding = {
   first_tx_at: string
   last_tx_at: string
   tx_count: number
+  // Optional, populated when the API was called with `with_prices` (default).
+  current_price?: string | null
+  last_price_at?: string | null
+  market_value?: string | null
+  unrealized_pnl?: string | null
+  unrealized_pnl_pct?: number | null
+}
+
+export type AutoPriceSyncResponse = {
+  portfolio_id: number
+  holdings_count: number
+  rows_written: number
+  results: Array<{
+    symbol: string
+    asset_type: string
+    ok: boolean
+    source?: string
+    coingecko_id?: string
+    fetched?: number
+    written?: number
+    error?: string
+  }>
 }
 
 export type PerformanceSummary = {
@@ -144,8 +166,15 @@ export const api = {
     request<void>(`/portfolios/${portfolioId}/transactions/${txId}`, { method: 'DELETE' }),
 
   // Holdings
-  listHoldings: (portfolioId: number) =>
-    request<Holding[]>(`/portfolios/${portfolioId}/holdings`),
+  listHoldings: (portfolioId: number, withPrices = true) =>
+    request<Holding[]>(
+      `/portfolios/${portfolioId}/holdings?with_prices=${withPrices}`,
+    ),
+  syncPortfolioPrices: (portfolioId: number, days = 30) =>
+    request<AutoPriceSyncResponse>(
+      `/sync/portfolio/${portfolioId}/auto-prices?days=${days}`,
+      { method: 'POST' },
+    ),
 
   // Performance
   performanceSummary: (portfolioId: number, method = 'fifo') =>

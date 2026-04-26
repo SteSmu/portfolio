@@ -89,3 +89,48 @@ def get_for_symbol(portfolio_id: int, symbol: str, asset_type: str) -> dict | No
         if h["symbol"] == symbol.upper() and h["asset_type"] == asset_type:
             return h
     return None
+
+
+def list_for_portfolio_with_prices(
+    portfolio_id: int, include_zero: bool = False,
+) -> list[dict]:
+    """Like list_for_portfolio() but enriched with latest market price.
+
+    Adds per-row keys:
+      - current_price        Decimal | None — latest close from public.candles
+      - last_price_at        datetime | None — when that close was recorded
+      - market_value         Decimal | None — quantity * current_price
+      - unrealized_pnl       Decimal | None — market_value - total_cost
+      - unrealized_pnl_pct   float    | None — unrealized_pnl / total_cost
+
+    Currency note: current_price comes from `candles.close` whose currency
+    follows the data source (Coingecko = vs_currency, Twelve Data = trade
+    currency). For now we surface raw values plus the holding's `currency`
+    so the UI can decide whether to FX-convert. Cross-currency conversion
+    lives in `performance.money.convert` and is not auto-applied here.
+    """
+    from pt.db import prices as _prices
+
+    rows = list_for_portfolio(portfolio_id, include_zero=include_zero)
+    if not rows:
+        return rows
+
+    keys = [(r["symbol"], r["asset_type"]) for r in rows]
+    price_map = _prices.latest_close_many(keys)
+
+    for r in rows:
+        price, ts = price_map.get((r["symbol"], r["asset_type"]), (None, None))
+        r["current_price"] = price
+        r["last_price_at"] = ts
+        if price is None or r["quantity"] is None:
+            r["market_value"] = None
+            r["unrealized_pnl"] = None
+            r["unrealized_pnl_pct"] = None
+            continue
+        market_value = r["quantity"] * price
+        unrealized = market_value - (r["total_cost"] or Decimal("0"))
+        r["market_value"] = market_value
+        r["unrealized_pnl"] = unrealized
+        cost = r["total_cost"] or Decimal("0")
+        r["unrealized_pnl_pct"] = float(unrealized / cost) if cost > 0 else None
+    return rows

@@ -17,6 +17,7 @@ from pt.data import coingecko as _cg
 from pt.data import frankfurter as _fx
 from pt.data import store as _store
 from pt.data import twelve_data as _td
+from pt.db import holdings as _holdings
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -78,4 +79,97 @@ def sync_stock(
         "symbol": symbol.upper(),
         "interval": candles[0]["interval"] if candles else interval,
         "rows_written": n,
+    }
+
+
+# ----- Bulk sync over a portfolio's holdings ----------------------------------
+
+# Convention: crypto symbols in our DB are typed `crypto` and we map them to
+# CoinGecko ids by lowercasing the symbol portion. For "BTC" we ask CoinGecko
+# for "bitcoin" — we maintain a tiny alias table for the most common ones so
+# users don't have to enter CoinGecko ids manually.
+_CRYPTO_ID_ALIASES: dict[str, str] = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "MATIC": "matic-network",
+    "AVAX": "avalanche-2",
+    "LTC": "litecoin",
+    "BCH": "bitcoin-cash",
+    "LINK": "chainlink",
+    "ATOM": "cosmos",
+    "USDT": "tether",
+    "USDC": "usd-coin",
+}
+
+
+def _coingecko_id(symbol: str) -> str:
+    sym = symbol.upper().split("-")[0]  # 'BITCOIN-USD' from our writes → 'BITCOIN'
+    if sym in _CRYPTO_ID_ALIASES:
+        return _CRYPTO_ID_ALIASES[sym]
+    return sym.lower()
+
+
+@router.post("/portfolio/{portfolio_id}/auto-prices")
+def sync_portfolio_prices(
+    portfolio_id: int,
+    days: int = 30,
+    vs_currency: str = "usd",
+) -> dict:
+    """Sync the most recent prices for every open position in a portfolio.
+
+    Per asset_type:
+      - crypto → CoinGecko (no key needed)
+      - stock / etf → Twelve Data (key required)
+      - fx / commodity / bond → skipped for now
+
+    Errors per holding don't fail the call — every result is reported. UI shows
+    the breakdown so users see exactly which provider failed for which symbol.
+    """
+    rows = _holdings.list_for_portfolio(portfolio_id)
+    results: list[dict] = []
+    total_written = 0
+
+    for h in rows:
+        symbol, asset_type = h["symbol"], h["asset_type"]
+        outcome: dict = {"symbol": symbol, "asset_type": asset_type, "ok": False}
+        try:
+            if asset_type == "crypto":
+                coin_id = _coingecko_id(symbol)
+                candles = _cg.fetch_ohlc(coin_id, vs_currency, days=days)
+                outcome["source"] = "coingecko"
+                outcome["coingecko_id"] = coin_id
+            elif asset_type in {"stock", "etf"}:
+                candles = _td.fetch_time_series(
+                    symbol, interval="1day", outputsize=days,
+                    asset_type=asset_type,
+                )
+                outcome["source"] = "twelve_data"
+            else:
+                outcome["error"] = f"asset_type {asset_type!r} not auto-priced yet"
+                results.append(outcome)
+                continue
+
+            n = _store.insert_candles(candles)
+            outcome["ok"] = True
+            outcome["fetched"] = len(candles)
+            outcome["written"] = n
+            total_written += n
+        except _td.TwelveDataError as e:
+            outcome["error"] = str(e)
+        except httpx.HTTPError as e:
+            outcome["error"] = f"HTTP error: {e}"
+        except Exception as e:  # pragma: no cover — unexpected fetcher failures
+            outcome["error"] = f"unexpected: {e}"
+        results.append(outcome)
+
+    return {
+        "portfolio_id": portfolio_id,
+        "holdings_count": len(rows),
+        "rows_written": total_written,
+        "results": results,
     }
