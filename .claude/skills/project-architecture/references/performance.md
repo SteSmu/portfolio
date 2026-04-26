@@ -72,7 +72,44 @@ Both are needed; the UI plans to surface both side by side.
 pt perf summary    --portfolio N [--method fifo|lifo|average]
 pt perf cost-basis --portfolio N [--method ...] [--symbol X]
 pt perf realized   --portfolio N [--method ...] [--year YYYY]
+
+# snapshot generator (writes portfolio.portfolio_snapshots — feeds the
+# equity curve / drawdown / TWR/MWR/Risk cards on the frontend)
+pt sync snapshots [-p N] [--backfill DAYS] [--end-date YYYY-MM-DD] [--dry-run] [--json]
 ```
+
+## Snapshot-fed time-series metrics
+
+[`pt/jobs/snapshots.py`](../../pt/jobs/snapshots.py) writes one row per
+(portfolio_id, snapshot_date) into `portfolio.portfolio_snapshots`:
+
+- `total_value` — Σ qty × latest close at-or-before end-of-day from
+  `public.candles` (FX-naive — caller of `_prices.latest_close_many`
+  passes `as_of=end-of-day` so historical days are valued with prices
+  that were actually known then)
+- `total_cost_basis` — sum of `Lot.cost_basis` from `compute_lots(method='fifo')`
+- `realized_pnl` — `realized_pnl_total(matches)` for the as-of point
+- `unrealized_pnl` — `total_value - total_cost_basis` (or 0 if total_value <= 0)
+- `holdings_count` — open positions
+- `metadata` JSONB — per-`asset_type` and per-`currency` market-value
+  breakdown for the allocation-over-time UI later
+
+`/api/portfolios/{id}/performance/summary` now layers the time-series
+math on top of those snapshots:
+
+| Field | Computed via |
+|--|--|
+| `timeseries.twr_period` | `twr.twr(snapshots)` |
+| `timeseries.twr_annualized` | `twr.annualized_twr(snapshots)` |
+| `timeseries.mwr` | `mwr.xirr(tx_log_cashflows + (terminal_date, terminal_value))` — null if XIRR needs both signs and the tx log doesn't have any |
+| `timeseries.max_drawdown` | `metrics.max_drawdown(daily_returns_from_snapshots(...))` |
+| `timeseries.volatility` | `metrics.volatility(..., periods_per_year=365)` |
+| `timeseries.sharpe` | `metrics.sharpe(..., periods_per_year=365)` |
+| `timeseries.calmar` | `metrics.calmar(..., periods_per_year=365)` |
+
+When fewer than 2 snapshots exist the whole `timeseries` block is null;
+the frontend shows a "needs snapshots — run `pt sync snapshots
+--backfill 365`" hint.
 
 ## Gotchas
 

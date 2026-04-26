@@ -11,9 +11,10 @@ never math's it).
 |--|--|--|
 | [`portfolios.py`](../../pt/api/routes/portfolios.py) | `/portfolios` | `POST /` create, `GET /` list, `GET /{id}` get, `DELETE /{id}` archive |
 | [`transactions.py`](../../pt/api/routes/transactions.py) | `/portfolios/{id}/transactions` | `POST /`, `GET /`, `GET /{tx_id}`, `DELETE /{tx_id}` (soft), `GET /{tx_id}/audit` |
-| [`holdings.py`](../../pt/api/routes/holdings.py) | `/portfolios/{id}/holdings` | `GET /` (with `?with_prices=true` default), `GET /{symbol}/{type}` |
-| [`assets.py`](../../pt/api/routes/assets.py) | `/assets` | `POST /` upsert, `GET /` list, `GET /_search/{q}` (declared BEFORE catch-all), `GET /{symbol}/{type}` |
-| [`performance.py`](../../pt/api/routes/performance.py) | `/portfolios/{id}/performance` | `GET /cost-basis`, `GET /realized` (year filter), `GET /summary` |
+| [`holdings.py`](../../pt/api/routes/holdings.py) | `/portfolios/{id}/holdings` | `GET /` (with `?with_prices=true` default), `GET /sparklines?days=N` (specific path BEFORE catch-all), `GET /{symbol}/{type}` |
+| [`assets.py`](../../pt/api/routes/assets.py) | `/assets` | `POST /` upsert, `GET /` list, `GET /_search/{q}`, `GET /{symbol}/{type}/candles?start&end&interval&limit` (specific 3-segment path BEFORE catch-all), `GET /{symbol}/{type}` |
+| [`performance.py`](../../pt/api/routes/performance.py) | `/portfolios/{id}/performance` | `GET /cost-basis`, `GET /realized` (year filter), `GET /summary` (now returns `timeseries` block — TWR/MWR/MaxDD/Vola/Sharpe/Calmar — null until snapshots exist) |
+| [`snapshots.py`](../../pt/api/routes/snapshots.py) | `/portfolios/{id}/snapshots` | `GET /?from&to`, `POST /?backfill=N` (on-demand) |
 | [`sync.py`](../../pt/api/routes/sync.py) | `/sync` | `POST /fx`, `POST /crypto`, `POST /stock`, `POST /portfolio/{id}/auto-prices` |
 | [`news.py`](../../pt/api/routes/news.py) | `/news` | `GET /{symbol}/{type}`, `POST /sync` |
 | [`imports.py`](../../pt/api/routes/imports.py) | `/portfolios/{id}/import` | `POST /pdf` (multipart, `?dry_run=bool`) — see [pdf-import.md](pdf-import.md) |

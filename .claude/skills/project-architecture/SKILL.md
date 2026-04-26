@@ -26,6 +26,7 @@ every transactional change is audited.
 | Investigate logs, add tracing, debug request-id propagation | [observability.md](references/observability.md) |
 | Touch news fetching, sentiment, or the dormant LLM-insights scaffold | [news-insights.md](references/news-insights.md) |
 | Live-pricing on holdings (current_price, market_value, unrealized P&L) | [pricing.md](references/pricing.md) |
+| Add a chart, pick the library, theme tokens, ECharts vs lightweight-charts | [charts.md](references/charts.md) |
 | Import a broker-statement PDF, add a new broker parser, debug OCR | [pdf-import.md](references/pdf-import.md) |
 | Build/deploy Docker stack, edit nginx, change CI, schema bootstrap | [deployment.md](references/deployment.md) |
 

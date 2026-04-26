@@ -13,7 +13,7 @@ backend, React 19 + Vite frontend, TimescaleDB (shareable with the sibling
 ## Where things live
 
 The architecture skill at `.claude/skills/project-architecture/` is the
-deep-dive map. Hub `SKILL.md` lists 11 references. Quick-orientation table:
+deep-dive map. Hub `SKILL.md` lists 12 references. Quick-orientation table:
 
 | Want to ... | Read |
 |--|--|
@@ -27,6 +27,7 @@ deep-dive map. Hub `SKILL.md` lists 11 references. Quick-orientation table:
 | edit Docker / nginx / CI / first-start init | `references/deployment.md` |
 | trace a request, debug logging | `references/observability.md` |
 | live-pricing on holdings | `references/pricing.md` |
+| add a chart, theme tokens, pick ECharts vs lightweight-charts | `references/charts.md` |
 | news fetching, sentiment, dormant LLM scaffold | `references/news-insights.md` |
 
 ## Hard rules (don't violate without good reason)
@@ -132,7 +133,7 @@ pt perf summary -p 1
 
 ## Status
 
-204 tests green. PDF importer ships for LGT Bank Vermögensaufstellung
+217 tests green. PDF importer ships for LGT Bank Vermögensaufstellung
 including OCR recovery for date / price-column fragments and Bloomberg
 ticker extraction; other brokers are a registry-extension away
 (`pt/importers/pdf/format_detect.py`).
@@ -141,9 +142,22 @@ Auto-prices supports CoinGecko (crypto), Twelve Data primary + Yahoo
 Finance fallback (stock/etf). SIX Swiss listings (NOVN/ROG/SDZ) routed
 directly to Yahoo via `_YAHOO_SYMBOL_MAP`.
 
+**Frontend Phase A done** — UX redesign turned the tracker into an
+insight tool. Equity curve + cost-basis overlay on the Dashboard,
+TradingView-style asset chart with tx markers + cost-basis line on
+AssetDetail, TWR/MWR/Risk cards + drawdown view on Performance,
+drillable allocation sunburst, Finviz-style holdings treemap, per-row
+sparklines, light/dark toggle backed by token-driven CSS variables.
+Charts: **Apache ECharts** via the `lib/echarts.ts` theme bridge
+(donut, sunburst, treemap, line, drawdown, sparkline) +
+**lightweight-charts v5** for the AssetDetail price+marker chart.
+Plan stayed `recharts`-free. New backend prereqs: `pt sync snapshots`
+generator (idempotent UPSERT), `GET /api/portfolios/{id}/snapshots`,
+`GET /api/assets/{symbol}/{type}/candles`, `GET .../holdings/sparklines`,
+extended `/performance/summary` with a `timeseries` block (TWR / MWR /
+max DD / vola / Sharpe / Calmar) — null until snapshots exist.
+
 Next-up tracked in `.claude/plans/portfolio-bootstrap.md`: Phase 7 (Tax
-DE-Reports), Phase 8 (Allocation/Income/Settings pages), Phase 9
-(claude-trader bridge). Frontend UX backlog (Phase A): light-mode toggle,
-Allocation-Donut, AssetDetail price chart with cost-basis line + tx
-markers, FX-converted EUR totals — `lightweight-charts` already
-installed but unused; Recharts to be added when starting Phase A.
+DE-Reports), Phase 8 (Income / dividends, FX-aware base-currency
+totals), Phase 9 (claude-trader bridge). LLM-insights via OpenRouter
+TS still planned for the frontend.

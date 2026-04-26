@@ -1,0 +1,116 @@
+# Charts
+
+Two libraries split by purpose:
+
+| Use | Library | Why |
+|--|--|--|
+| Equity curve, drawdown, allocation donut/sunburst, holdings treemap heatmap, sparklines, dividend bars (future), correlation heatmap (future), sankey (future) | **Apache ECharts** via [`lib/echarts.ts`](../../frontend/src/lib/echarts.ts) | One library covers donut/sunburst/treemap/heatmap/sankey on a single canvas. Tree-shaken (`echarts/core` + only the chart types and components we register) → ~110 kB gz. First-class TS, React 19 OK. |
+| AssetDetail price chart with buy/sell markers + horizontal cost-basis line | **lightweight-charts v5** | Built for finance: `createSeriesMarkers` plugin pins markers above/below bars, `createPriceLine` for the cost-basis horizontal, multi-pane support. ~35 kB gz. Other libs need wrapping to do this; lightweight-charts does it natively. |
+
+Both wrappers re-mount on theme change so the palette stays readable.
+**Never** install a third charting library — Recharts (planned originally)
+was dropped because it lacks Sunburst and has a weak Sankey, which would
+have pushed us to a 3-lib zoo.
+
+## ECharts wrapper — [`components/charts/Chart.tsx`](../../frontend/src/components/charts/Chart.tsx)
+
+```tsx
+<Chart option={option} height={300} onClick={(p) => ...} />
+```
+
+Internally:
+1. `useChartTheme()` from [`lib/echarts.ts`](../../frontend/src/lib/echarts.ts)
+   reads CSS variables (`--bg-base`, `--text-primary`, `--chart-grid`,
+   `--gain`, `--loss`, `--accent`, `--cat-1..8`) and registers an ECharts
+   theme `pt-dark` / `pt-light`. Theme name + a bump key are returned;
+   the wrapper destroys & re-inits the chart whenever the bump changes
+   (i.e. when the user toggles the theme).
+2. `ResizeObserver` calls `chart.resize()` on container width changes.
+3. `setOption(option)` runs on every `option` prop change without
+   re-mounting (animation is preserved).
+
+Only registered chart-types are available on `Chart`. Adding a new chart
+type means `echarts.use([NewChart])` inside `lib/echarts.ts` — keep this
+explicit, not auto-imported.
+
+## lightweight-charts wrapper — [`components/charts/AssetPriceChart.tsx`](../../frontend/src/components/charts/AssetPriceChart.tsx)
+
+v5 API (DON'T fall back to v4 docs):
+
+```tsx
+import { createChart, LineSeries, createSeriesMarkers } from 'lightweight-charts'
+
+const chart = createChart(container, options)
+const series = chart.addSeries(LineSeries, { color, lineWidth: 2 })
+series.setData([{ time: utcSeconds, value: number }, ...])
+createSeriesMarkers(series, [
+  { time, position: 'belowBar', shape: 'arrowUp',   color: gain, text: 'buy 0.1 @ 84000' },
+  { time, position: 'aboveBar', shape: 'arrowDown', color: loss, text: 'sell 0.1 @ 98000' },
+])
+series.createPriceLine({ price: avgCost, lineStyle: 2, axisLabelVisible: true, title: 'cost basis' })
+```
+
+Time is `UTCTimestamp = unix-seconds`. The wrapper re-mounts on theme
+change (via the `useTheme()` hook's `resolved` value) so the colour-
+scheme switch is instant.
+
+## Theme tokens used by charts
+
+Defined in [`index.css`](../../frontend/src/index.css) on `:root` and
+`:root[data-theme="light"]`. Charts read them via `getComputedStyle` —
+either through `lib/echarts.ts:readChartTokens()` for ECharts or
+`readVar()` inside `AssetPriceChart.tsx`.
+
+| Token | Used by |
+|--|--|
+| `--bg-base`, `--bg-elev` | chart background, tooltip border |
+| `--chart-grid`, `--chart-axis` | grid lines + axis labels |
+| `--text-primary`, `--text-secondary`, `--text-tertiary` | tooltip + label text |
+| `--gain`, `--loss`, `--flat` | buy/sell markers, P&L colour, drawdown fill |
+| `--accent` | line colour for the asset price chart |
+| `--cat-1..8` | categorical palette for sunburst / donut / treemap (each variant has a 2026-suitable accessible palette) |
+| `--chart-tooltip-bg`, `--chart-tooltip-border` | tooltip box |
+
+Light + dark have their own colour values for every token; the chart
+theme bridge re-derives all colours when the toggle fires.
+
+## Adding a new chart
+
+1. Pick the library: ECharts unless it's a financial OHLC + markers
+   chart (then lightweight-charts).
+2. If ECharts and the chart type is new (e.g. you want a `RadarChart`):
+   import + `echarts.use([RadarChart])` inside `lib/echarts.ts`.
+3. Build a wrapper component under `components/charts/` that takes
+   typed props (NOT the raw ECharts option) and computes the option
+   inline. Example in [`EquityCurve.tsx`](../../frontend/src/components/charts/EquityCurve.tsx).
+4. In the wrapper, prefer `var(--token)` over hex literals for any
+   colour the user might see. ECharts accepts `var(...)` strings
+   wherever a colour is expected.
+5. Use `<Chart option={...} height={...} />` — never call
+   `echarts.init` directly outside `Chart.tsx`, otherwise the chart
+   loses theme-switch handling and the resize observer.
+
+## Gotchas
+
+- **lightweight-charts v5 ≠ v4.** v4 used `chart.addLineSeries()`; v5
+  uses `chart.addSeries(LineSeries, ...)`. Markers moved from
+  `series.setMarkers()` (v4) to the standalone `createSeriesMarkers()`
+  primitive plugin (v5). When debugging, check the installed version
+  in `package.json` first.
+- **Tree-shaking only works if you import from `echarts/core`.**
+  `import * as echarts from 'echarts'` pulls everything (~350 kB gz).
+  All chart-type registration must go through `echarts.use([...])`,
+  and all imports must come from `echarts/core` / `echarts/charts` /
+  `echarts/components` / `echarts/renderers`. Audit `lib/echarts.ts`
+  before merging — a stray `import 'echarts'` defeats the budget.
+- **CSS-variable reads require browser context.** `getComputedStyle`
+  is undefined during SSR; we don't SSR today, but if we ever add it,
+  the chart wrappers will need to defer initialisation to
+  `useEffect`. Currently they already do via `useChartTheme()`.
+- **Treemap + Sunburst can't co-exist on a tile.** ECharts's `treemap`
+  series carries its own breadcrumb / drill semantics; the sunburst's
+  `emphasis: ancestor` is incompatible. Use one or the other per chart.
+- **Marker overlap on AssetDetail.** When multiple buys land on the
+  same date+price, lightweight-charts renders them stacked. Group
+  identical-price markers on the API/aggregation side if visual noise
+  becomes a problem (out of scope for Phase A).
