@@ -263,6 +263,18 @@ export const api = {
     return request<RealizedReport>(`/portfolios/${portfolioId}/performance/realized?${qs}`)
   },
 
+  // Audit history for a single transaction (returned by the audit trigger)
+  txAudit: (portfolioId: number, txId: number) =>
+    request<Array<{
+      id: number
+      transaction_id: number
+      operation: 'INSERT' | 'UPDATE' | 'DELETE'
+      old_data: Record<string, unknown> | null
+      new_data: Record<string, unknown> | null
+      changed_at: string
+      changed_by: string | null
+    }>>(`/portfolios/${portfolioId}/transactions/${txId}/audit`),
+
   // Snapshots — equity-curve / drawdown / allocation-over-time data source
   listSnapshots: (portfolioId: number, opts: { from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams()

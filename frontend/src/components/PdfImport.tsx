@@ -41,7 +41,7 @@ export default function PdfImport({ portfolioId }: { portfolioId: number }) {
       <div className="flex items-start justify-between gap-4 mb-3">
         <div>
           <h2 className="font-semibold">Import broker statement (PDF)</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
             Currently supported: LGT Bank Vermögensaufstellung. Drag in a PDF to preview;
             confirm to write transfer-in transactions.
           </p>
@@ -50,22 +50,28 @@ export default function PdfImport({ portfolioId }: { portfolioId: number }) {
           ref={inputRef}
           type="file"
           accept="application/pdf"
-          className="text-xs file:mr-3 file:rounded file:border-0 file:bg-zinc-800
-                     file:text-zinc-200 file:px-3 file:py-1.5 file:text-sm
-                     hover:file:bg-zinc-700"
+          className="text-xs file:mr-3 file:rounded file:border-0
+                     file:px-3 file:py-1.5 file:text-sm
+                     file:[background-color:var(--bg-elev-hi)]
+                     file:[color:var(--text-primary)]
+                     hover:file:[background-color:var(--bg-elev-hover)]"
           onChange={e => pickFile(e.target.files?.[0] ?? null)}
         />
       </div>
 
-      {dryRun.isPending && <p className="text-zinc-500 text-sm">parsing…</p>}
+      {dryRun.isPending && (
+        <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>parsing…</p>
+      )}
       {dryRun.error && (
         <p className="loss text-sm">{(dryRun.error as Error).message}</p>
       )}
 
       {preview && (
         <div className="space-y-3">
-          <div className="text-xs text-zinc-400">
-            <span className="text-zinc-200 font-medium">{preview.parser}</span>
+          <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+            <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+              {preview.parser}
+            </span>
             {' · '}{preview.customer}
             {' · '}{preview.statement_date}
             {' · '}{preview.base_currency}
@@ -80,8 +86,8 @@ export default function PdfImport({ portfolioId }: { portfolioId: number }) {
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="text-zinc-400 uppercase">
-                <tr className="border-b border-zinc-800">
+              <thead className="uppercase" style={{ color: 'var(--text-tertiary)' }}>
+                <tr style={{ borderBottom: '1px solid var(--border-base)' }}>
                   <th className="text-left py-1.5">Symbol</th>
                   <th className="text-left">Type</th>
                   <th className="text-right">Qty</th>
@@ -92,13 +98,19 @@ export default function PdfImport({ portfolioId }: { portfolioId: number }) {
               </thead>
               <tbody>
                 {preview.transactions.map((t, i) => (
-                  <tr key={i} className="border-b border-zinc-900">
-                    <td className="py-1 font-medium">{t.symbol}</td>
-                    <td className="text-zinc-400">{t.asset_type}</td>
-                    <td className="text-right tabular-nums">{fmtQty(t.quantity)}</td>
-                    <td className="text-right tabular-nums">{fmtPrice(t.price)}</td>
-                    <td className="text-zinc-400">{t.trade_currency}</td>
-                    <td className="text-zinc-500">{fmtDate(t.executed_at)}</td>
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border-base)' }}>
+                    <td className="py-1 font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {t.symbol}
+                    </td>
+                    <td style={{ color: 'var(--text-tertiary)' }}>{t.asset_type}</td>
+                    <td className="text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                      {fmtQty(t.quantity)}
+                    </td>
+                    <td className="text-right tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                      {fmtPrice(t.price)}
+                    </td>
+                    <td style={{ color: 'var(--text-tertiary)' }}>{t.trade_currency}</td>
+                    <td style={{ color: 'var(--text-tertiary)' }}>{fmtDate(t.executed_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -106,7 +118,7 @@ export default function PdfImport({ portfolioId }: { portfolioId: number }) {
           </div>
 
           {preview.warnings.length > 0 && (
-            <details className="text-xs text-zinc-500">
+            <details className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
               <summary className="cursor-pointer">Warnings</summary>
               <ul className="mt-1 space-y-1">
                 {preview.warnings.map((w, i) => (
