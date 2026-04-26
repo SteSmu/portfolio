@@ -116,6 +116,25 @@ pt perf summary -p 1
   TD said: needs Pro plan" rather than a silent provider switch. Bare
   ticker is the DB key regardless of provider; `_YAHOO_SYMBOL_MAP` in
   `pt/api/routes/sync.py` translates non-US tickers to Yahoo form.
+- **Subagent priming for parallel implementation work.** When spawning
+  worktree-isolated implementation agents (`Agent` with
+  `isolation: 'worktree'`), prime them with concrete signatures
+  (`module.fn(arg, …) -> Type`), `file:line` refs to existing patterns,
+  and inline code snippets for the contracts they'll consume —
+  not "read X.md and figure it out". Skip the priming and the agent
+  burns 30%+ of its turns grepping for what you already know. Spawn
+  the work, then immediately `SendMessage` to follow-up with the
+  primer (a second message is fine). When two agents touch related
+  files, write the file-boundary rules into both prompts so the
+  worktree merges cleanly.
+- **Prod docker stack must be rebuilt after frontend / route /
+  schema changes** — `docker compose -f docker-compose.prod.yml up -d
+  --build`. The dev server (vite on 5175) hot-reloads; the prod nginx
+  on 5174 serves a frozen build. When a user says "I don't see the
+  changes", default to rebuilding prod before debugging frontend
+  state. Schema-only changes also need a one-time `docker exec pt-api
+  pt db migrate` because the volume's first-start init only fires
+  once per fresh volume.
 
 ## What lives elsewhere
 
