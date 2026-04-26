@@ -87,12 +87,23 @@ pt sync snapshots [-p N] [--backfill DAYS] [--end-date YYYY-MM-DD] [--dry-run] [
   `public.candles` (FX-naive — caller of `_prices.latest_close_many`
   passes `as_of=end-of-day` so historical days are valued with prices
   that were actually known then)
+- `total_value_base` — FX-aware `total_value` converted into the
+  portfolio's `base_currency` via `pt.performance.money.convert(...,
+  on_date=snapshot_date)`. `compute_snapshot` groups market values by
+  source currency and sums per-bucket conversions; if any bucket has no
+  Frankfurter rate path at-or-before that day the entire field is
+  `None` (partial sums would silently understate the total). Frontend
+  `Snapshot.total_value_base: string | null` — null falls back to
+  `total_value` and surfaces a "run `pt sync fx --base EUR --days 400`"
+  hint. Frankfurter publishes weekday rates only, so the latest-at-or-
+  before lookup carries Friday's rate through the weekend.
 - `total_cost_basis` — sum of `Lot.cost_basis` from `compute_lots(method='fifo')`
 - `realized_pnl` — `realized_pnl_total(matches)` for the as-of point
 - `unrealized_pnl` — `total_value - total_cost_basis` (or 0 if total_value <= 0)
 - `holdings_count` — open positions
 - `metadata` JSONB — per-`asset_type` and per-`currency` market-value
-  breakdown for the allocation-over-time UI later
+  breakdown for the allocation-over-time UI later, plus
+  `base_currency` for the FX-aware base total
 
 `/api/portfolios/{id}/performance/summary` now layers the time-series
 math on top of those snapshots:

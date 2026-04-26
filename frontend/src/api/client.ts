@@ -92,6 +92,11 @@ export type PerformanceSummary = {
 export type Snapshot = {
   date: string
   total_value: string
+  // FX-aware total in the portfolio's base_currency. `null` when at least
+  // one source currency is missing a Frankfurter rate at-or-before this
+  // snapshot — UI should fall back to `total_value` and surface a
+  // "run `pt sync fx`" hint rather than show a wrong number.
+  total_value_base: string | null
   total_cost_basis: string
   realized_pnl: string
   unrealized_pnl: string
@@ -103,6 +108,7 @@ export type Snapshot = {
     priced_holdings?: number
     open_holdings?: number
     tx_total?: number
+    base_currency?: string
   }
 }
 

@@ -77,3 +77,107 @@ def test_backfill_dry_run_does_not_write(isolated_portfolio):
     rows = _snap.backfill(pid, days=2, end_date=date(2026, 1, 5), dry_run=True)
     assert len(rows) == 2
     assert _snap.list_snapshots(pid) == []
+
+
+# -- FX-aware base-currency totals (Phase A4) -----------------------------------
+
+@requires_db
+def test_total_value_base_uses_historical_fx(isolated_portfolio):
+    """USD candle + EURUSD=1.10 → EUR base = total_value / 1.10."""
+    from pt.data import store
+
+    pid = isolated_portfolio  # fixture creates EUR-base portfolios
+    snap_date = date(2026, 2, 10)
+    end_of_day = datetime(2026, 2, 10, 23, 59, 59, tzinfo=timezone.utc)
+    fx_time = datetime(2026, 2, 10, tzinfo=timezone.utc)
+    sym = "PHASEAUSD"
+
+    # Seed FX rate EURUSD = 1.10 on snapshot day.
+    store.insert_fx_rates([{
+        "time": fx_time, "source": "frankfurter", "symbol": "EURUSD",
+        "value": Decimal("1.10"), "metadata": {},
+    }])
+    # Seed a USD-denominated candle (close = 100 USD) on the same day.
+    store.insert_candles([{
+        "time": end_of_day, "symbol": sym, "interval": "1day",
+        "open": Decimal("100"), "high": Decimal("100"), "low": Decimal("100"),
+        "close": Decimal("100"), "volume": Decimal("0"),
+        "asset_type": "stock", "source": "test",
+    }])
+    # transfer_in pins cost basis (qty x price + fees) — same semantics as buy.
+    _tx.insert(
+        portfolio_id=pid, symbol=sym, asset_type="stock", action="transfer_in",
+        executed_at=datetime(2026, 2, 9, tzinfo=timezone.utc),
+        quantity=Decimal("3"), price=Decimal("100"),
+        trade_currency="USD", source="test",
+    )
+
+    try:
+        row = _snap.compute_snapshot(pid, snap_date)
+        assert row.total_value == Decimal("300")  # 3 x 100 USD, FX-naive
+        assert row.total_value_base is not None
+        # 300 USD / 1.10 EURUSD = 272.727272... EUR. Pin to 2 dp at display.
+        from pt.performance.money import quantize_money
+        assert quantize_money(row.total_value_base) == Decimal("272.73")
+    finally:
+        from pt.db.connection import get_conn
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM public.market_meta WHERE source='frankfurter' "
+                "AND symbol='EURUSD' AND time=%s",
+                (fx_time,),
+            )
+            cur.execute(
+                "DELETE FROM public.candles WHERE symbol=%s AND interval='1day'",
+                (sym,),
+            )
+            conn.commit()
+
+
+@requires_db
+def test_total_value_base_is_none_when_fx_missing(isolated_portfolio):
+    """No FX rate at-or-before snapshot day → total_value_base is None."""
+    from pt.data import store
+
+    pid = isolated_portfolio  # EUR-base
+    snap_date = date(2026, 3, 15)
+    end_of_day = datetime(2026, 3, 15, 23, 59, 59, tzinfo=timezone.utc)
+    sym = "PHASEAGBP"
+
+    # Seed a GBP-denominated candle, but DO NOT seed any EURGBP/GBPEUR rate.
+    store.insert_candles([{
+        "time": end_of_day, "symbol": sym, "interval": "1day",
+        "open": Decimal("50"), "high": Decimal("50"), "low": Decimal("50"),
+        "close": Decimal("50"), "volume": Decimal("0"),
+        "asset_type": "stock", "source": "test",
+    }])
+    _tx.insert(
+        portfolio_id=pid, symbol=sym, asset_type="stock", action="transfer_in",
+        executed_at=datetime(2026, 3, 14, tzinfo=timezone.utc),
+        quantity=Decimal("2"), price=Decimal("50"),
+        trade_currency="GBP", source="test",
+    )
+
+    try:
+        # Defensive: clear any pre-existing EURGBP rate that other tests may
+        # have left in this shared dev DB. Frankfurter rates are global.
+        from pt.db.connection import get_conn
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM public.market_meta WHERE source='frankfurter' "
+                "AND symbol IN ('EURGBP','GBPEUR') AND time::date <= %s",
+                (snap_date,),
+            )
+            conn.commit()
+
+        row = _snap.compute_snapshot(pid, snap_date)
+        assert row.total_value == Decimal("100")  # 2 x 50 GBP, FX-naive
+        assert row.total_value_base is None
+    finally:
+        from pt.db.connection import get_conn
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM public.candles WHERE symbol=%s AND interval='1day'",
+                (sym,),
+            )
+            conn.commit()

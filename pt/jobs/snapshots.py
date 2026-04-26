@@ -29,9 +29,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Iterable
 
+from pt.db import portfolios as _portfolios
 from pt.db import prices as _prices
 from pt.db import transactions as _tx
 from pt.db.connection import get_conn
+from pt.performance import money as _money
 from pt.performance.cost_basis import compute_lots, realized_pnl_total
 
 
@@ -50,6 +52,11 @@ class SnapshotRow:
     cash: Decimal
     holdings_count: int
     metadata: dict
+    # FX-aware total in the portfolio's base_currency. None when at least
+    # one source-currency bucket has no Frankfurter rate path at-or-before
+    # snapshot_date — callers must treat None as "FX rate gap, run
+    # `pt sync fx`" rather than zero.
+    total_value_base: Decimal | None = None
 
 
 def _filter_at_or_before(txs: list[dict], end: datetime) -> list[dict]:
@@ -101,12 +108,31 @@ def compute_snapshot(portfolio_id: int, snapshot_date: date) -> SnapshotRow:
     open_cost = sum(cost_per.values(), Decimal("0"))
     unrealized = total_value - open_cost if total_value > 0 else Decimal("0")
 
+    # FX-aware base-currency total: walk each source-currency bucket through
+    # `money.convert(...)` and sum. If any single bucket has no rate path
+    # the whole base-total is None — partial sums would be misleading
+    # ("looks low" instead of "incomplete").
+    portfolio = _portfolios.get(portfolio_id)
+    base_ccy = (portfolio or {}).get("base_currency") or "EUR"
+    total_value_base: Decimal | None = Decimal("0")
+    for ccy, sub in by_currency.items():
+        if total_value_base is None:
+            break
+        try:
+            total_value_base += _money.convert(
+                sub, ccy, base_ccy, on_date=snapshot_date,
+            )
+        except (ValueError, LookupError):
+            total_value_base = None
+    # Empty portfolios still get base=0 (matches total_value=0).
+
     metadata = {
         "by_asset_type": {k: str(v) for k, v in by_asset_type.items()},
         "by_currency":   {k: str(v) for k, v in by_currency.items()},
         "priced_holdings": priced_count,
         "open_holdings": len(qty_per),
         "tx_total": len(txs),
+        "base_currency": base_ccy,
     }
 
     return SnapshotRow(
@@ -120,6 +146,7 @@ def compute_snapshot(portfolio_id: int, snapshot_date: date) -> SnapshotRow:
         cash=Decimal("0"),
         holdings_count=len([k for k, q in qty_per.items() if q > 0]),
         metadata=metadata,
+        total_value_base=total_value_base,
     )
 
 
@@ -128,8 +155,9 @@ def write_snapshot(row: SnapshotRow) -> None:
     sql = """
     INSERT INTO portfolio.portfolio_snapshots
       (portfolio_id, snapshot_date, total_value, total_cost_basis,
-       realized_pnl, unrealized_pnl, cash, holdings_count, metadata)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+       realized_pnl, unrealized_pnl, cash, holdings_count, metadata,
+       total_value_base)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
     ON CONFLICT (portfolio_id, snapshot_date) DO UPDATE SET
       total_value      = EXCLUDED.total_value,
       total_cost_basis = EXCLUDED.total_cost_basis,
@@ -137,7 +165,8 @@ def write_snapshot(row: SnapshotRow) -> None:
       unrealized_pnl   = EXCLUDED.unrealized_pnl,
       cash             = EXCLUDED.cash,
       holdings_count   = EXCLUDED.holdings_count,
-      metadata         = EXCLUDED.metadata
+      metadata         = EXCLUDED.metadata,
+      total_value_base = EXCLUDED.total_value_base
     """
     import json as _json
     with get_conn() as conn, conn.cursor() as cur:
@@ -147,6 +176,7 @@ def write_snapshot(row: SnapshotRow) -> None:
             row.realized_pnl, row.unrealized_pnl,
             row.cash, row.holdings_count,
             _json.dumps(row.metadata, default=str),
+            row.total_value_base,
         ))
         conn.commit()
 
@@ -196,7 +226,8 @@ def list_snapshots(
         params.append(end)
     sql = f"""
     SELECT snapshot_date, total_value, total_cost_basis,
-           realized_pnl, unrealized_pnl, cash, holdings_count, metadata
+           realized_pnl, unrealized_pnl, cash, holdings_count, metadata,
+           total_value_base
       FROM portfolio.portfolio_snapshots
      WHERE {' AND '.join(where)}
      ORDER BY snapshot_date ASC
@@ -214,6 +245,7 @@ def list_snapshots(
             "cash": r[5],
             "holdings_count": r[6],
             "metadata": r[7],
+            "total_value_base": r[8],
         }
         for r in rows
     ]

@@ -137,7 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_corp_symbol
 CREATE TABLE IF NOT EXISTS portfolio.portfolio_snapshots (
     portfolio_id    INTEGER NOT NULL REFERENCES portfolio.portfolios(id),
     snapshot_date   DATE NOT NULL,
-    total_value     NUMERIC(20,8) NOT NULL,        -- in base_currency
+    total_value     NUMERIC(20,8) NOT NULL,        -- FX-naive sum of qty x close in source currencies
     total_cost_basis NUMERIC(20,8) NOT NULL,
     realized_pnl    NUMERIC(20,8) NOT NULL,
     unrealized_pnl  NUMERIC(20,8) NOT NULL,
@@ -146,6 +146,13 @@ CREATE TABLE IF NOT EXISTS portfolio.portfolio_snapshots (
     metadata        JSONB,
     PRIMARY KEY (portfolio_id, snapshot_date)
 );
+-- FX-aware base-currency total. NULL when at least one source currency
+-- has no historical Frankfurter rate at-or-before snapshot_date.
+DO $$ BEGIN
+    ALTER TABLE portfolio.portfolio_snapshots
+        ADD COLUMN total_value_base NUMERIC(20,8);
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 -- TimescaleDB-Hypertable (geht nur fuer eine Tabelle ohne Foreign-Keys auf andere
 -- Hypertables; falls FK-Konflikt: regulaere Tabelle reicht voellig fuer Snapshots).
 DO $$ BEGIN
