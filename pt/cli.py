@@ -31,11 +31,14 @@ def _root(
         raise typer.Exit()
 
 
-# Sub-apps are registered here as they are implemented.
-# from pt import cli_db, cli_holdings, cli_import, cli_sync, cli_perf, cli_serve
-# app.add_typer(cli_db.app, name="db")
-# app.add_typer(cli_holdings.app, name="holdings")
-# ...
+# Sub-apps registered here as phases land.
+from pt import cli_asset, cli_db, cli_holdings, cli_portfolio, cli_tx
+
+app.add_typer(cli_db.app, name="db")
+app.add_typer(cli_portfolio.app, name="portfolio")
+app.add_typer(cli_tx.app, name="tx")
+app.add_typer(cli_holdings.app, name="holdings")
+app.add_typer(cli_asset.app, name="asset")
 
 
 if __name__ == "__main__":

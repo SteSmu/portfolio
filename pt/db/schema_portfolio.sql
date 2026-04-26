@@ -206,3 +206,33 @@ CREATE TABLE IF NOT EXISTS portfolio.import_log (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_import_log
     ON portfolio.import_log (portfolio_id, file_hash);
+
+
+-- =============================================================================
+-- 3) Audit Trigger — every write to transactions logged immutably
+-- =============================================================================
+
+-- Audit trigger: INSERT and UPDATE only.
+-- DELETE is intentionally not audited because:
+--   1) Production code uses soft-delete (UPDATE deleted_at) — already captured.
+--   2) Hard-DELETE is test-cleanup / admin-only and the audit-FK would block it.
+-- If hard-DELETE is ever needed in production, drop the FK or cascade explicitly.
+CREATE OR REPLACE FUNCTION portfolio.fn_log_transaction_audit() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO portfolio.transaction_audit (transaction_id, operation, new_data, changed_by)
+        VALUES (NEW.id, 'INSERT', to_jsonb(NEW), current_setting('portfolio.changed_by', true));
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO portfolio.transaction_audit (transaction_id, operation, old_data, new_data, changed_by)
+        VALUES (NEW.id, 'UPDATE', to_jsonb(OLD), to_jsonb(NEW), current_setting('portfolio.changed_by', true));
+        RETURN NEW;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_transactions_audit ON portfolio.transactions;
+CREATE TRIGGER trg_transactions_audit
+    AFTER INSERT OR UPDATE ON portfolio.transactions
+    FOR EACH ROW EXECUTE FUNCTION portfolio.fn_log_transaction_audit();
