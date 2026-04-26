@@ -350,6 +350,40 @@ def _extract_isin_from_tokens(block) -> str | None:
     return None
 
 
+def _recover_date_text(s: str) -> str:
+    """OCR-recovery for date-shaped tokens.
+
+    LGT scans show systematic letter-into-digit substitutions in dates:
+      `3't.01.2025` → `31.01.2025`  (`'t` is the OCR rendering of `1`)
+      `0l.06.2019`  → `01.06.2019`  (`l` for `1`)
+      `1A.06.2019`  → `10.06.2019`  (`A` for `0`)
+
+    The substitution map mirrors `_parse_decimal` plus the multi-char `'t→1`
+    pathology specific to dates. Applied only when the strict regex fails,
+    so genuinely-clean tokens are never altered.
+    """
+    return (s.replace("'t", "1")
+             .replace("l", "1").replace("I", "1")
+             .replace("O", "0").replace("o", "0")
+             .replace("A", "0"))
+
+
+def _try_parse_date(text: str) -> date | None:
+    """Strict-then-recovery date match. Returns None for non-date tokens."""
+    m = _DATE_RE.fullmatch(text)
+    if not m:
+        # OCR may have mangled one digit — apply substitutions and retry.
+        recovered = _recover_date_text(text)
+        m = _DATE_RE.fullmatch(recovered)
+        if not m:
+            return None
+    d, mo, y = m.groups()
+    try:
+        return date(int(y), int(mo), int(d))
+    except ValueError:
+        return None
+
+
 def _extract_dates(block) -> tuple[date | None, date | None]:
     """Pick entry + current date by x-column, not text order.
 
@@ -366,13 +400,8 @@ def _extract_dates(block) -> tuple[date | None, date | None]:
     entry_candidates: list[tuple[float, date]] = []
     current_candidates: list[tuple[float, date]] = []
     for w in block:
-        m = _DATE_RE.fullmatch(w["text"])
-        if not m:
-            continue
-        d, mo, y = m.groups()
-        try:
-            dt = date(int(y), int(mo), int(d))
-        except ValueError:
+        dt = _try_parse_date(w["text"])
+        if dt is None:
             continue
         if DATE_COL_MIN <= w["x0"] < DATE_SPLIT:
             entry_candidates.append((w["top"], dt))
@@ -386,30 +415,58 @@ def _extract_dates(block) -> tuple[date | None, date | None]:
 
 
 def _extract_prices(block, qty: Decimal) -> tuple[Decimal | None, Decimal | None]:
-    """Entry and current prices live in the price column (x in [680, 880])
-    and on the topmost row of the block. They look like '47.1285' / '109.6000'.
+    """Entry and current prices live in adjacent sub-columns of the price band.
+
+    Layout (LGT 2025): Einstandskurs at x ∈ [460,510], Aktueller Kurs at
+    x ∈ [510,570]. Real prices always include a decimal point (4 dp typical),
+    so we require '.' in the source token. This filters OCR fragments like
+    `20` (sliced from `201.9400`) and `r.9400` (`r` blocks the decimal regex
+    — see Alphabet/GOOGL pathology) — without the `.`-guard the bare `20`
+    would survive as a pseudo-price and produce a $2k cost basis on a $20k
+    position.
+
+    Splitting by column (rather than picking the two leftmost on the topmost
+    row) means a missing entry-side token returns ``entry=None`` cleanly
+    instead of mis-attributing the current price as the entry — better to
+    skip the import than write a wrong cost basis.
     """
-    candidates: list[tuple[float, float, Decimal]] = []  # (top, x, value)
+    PRICE_SPLIT_X = 510  # midpoint between Einstandskurs and Aktueller Kurs columns
+    entry_candidates: list[tuple[float, float, Decimal]] = []
+    current_candidates: list[tuple[float, float, Decimal]] = []
     for w in block:
         if not (COL_PRICE_MIN_X < w["x0"] < COL_PRICE_MAX_X):
+            continue
+        if "." not in w["text"]:
             continue
         v = _parse_decimal(w["text"])
         if v is None:
             continue
-        if Decimal("0.05") < v < Decimal("100000") and v != qty:
-            candidates.append((w["top"], w["x0"], v))
-    if not candidates:
-        return None, None
-    candidates.sort()  # top-first, then leftmost
+        if not (Decimal("0.05") < v < Decimal("100000")) or v == qty:
+            continue
+        if w["x0"] < PRICE_SPLIT_X:
+            entry_candidates.append((w["top"], w["x0"], v))
+        else:
+            current_candidates.append((w["top"], w["x0"], v))
 
-    # Heuristic: the first row of price candidates has [entry, current].
-    # Group by top (within 4px), pick the first group, take the two leftmost.
-    first_y = candidates[0][0]
-    first_row = [c for c in candidates if abs(c[0] - first_y) < 5]
-    first_row.sort(key=lambda c: c[1])  # by x
-    entry = first_row[0][2] if len(first_row) >= 1 else None
-    current = first_row[1][2] if len(first_row) >= 2 else None
-    return entry, current
+    def _topmost(cands: list[tuple[float, float, Decimal]]) -> tuple[float, Decimal] | None:
+        if not cands:
+            return None
+        cands.sort()  # top-first, then leftmost
+        return cands[0][0], cands[0][2]
+
+    e = _topmost(entry_candidates)
+    c = _topmost(current_candidates)
+
+    # Real prices in entry + current columns live on the SAME visual row
+    # (same top-y, within ~3px). The FX-rate row sits ~10px below. If the
+    # surviving entry-side candidate is meaningfully below the current-side
+    # one, the real entry price was OCR-shredded and the survivor is FX
+    # bleed — better to return None than report 1.0430 (a USD/EUR rate)
+    # as a $1.04 stock price.
+    if e is not None and c is not None and e[0] > c[0] + 5:
+        e = None
+
+    return (e[1] if e else None), (c[1] if c else None)
 
 
 def _extract_market_value(block, qty: Decimal,

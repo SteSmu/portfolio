@@ -231,6 +231,106 @@ def test_lgt_parser_extracts_bloomberg_tickers_for_known_positions():
         )
 
 
+# ---------- OCR pathology recovery -------------------------------------------
+
+def test_recover_date_text_handles_apostrophe_t_for_one():
+    """LGT scan pathology: `1` rendered as `'t` glued to the previous digit."""
+    from pt.importers.pdf.lgt import _try_parse_date
+    from datetime import date
+
+    assert _try_parse_date("3't.01.2025") == date(2025, 1, 31)
+    assert _try_parse_date("0l.06.2019") == date(2019, 6, 1)   # l → 1
+    assert _try_parse_date("1A.06.2019") == date(2019, 6, 10)  # A → 0
+
+
+def test_recover_date_text_passes_clean_dates_unchanged():
+    from pt.importers.pdf.lgt import _try_parse_date
+    from datetime import date
+
+    assert _try_parse_date("31.01.2025") == date(2025, 1, 31)
+    assert _try_parse_date("not-a-date") is None
+
+
+def test_extract_prices_rejects_integer_only_tokens():
+    """When OCR slices `201.9400` into `20` + `r.9400`, the bare `20` must NOT
+    survive as a pseudo-price. Real prices always carry a decimal portion in
+    LGT statements."""
+    from decimal import Decimal
+    from pt.importers.pdf.lgt import _extract_prices
+
+    # The "real" entry price `201.9400` is missing — only the OCR fragments
+    # remain. The current price `313.0000` is intact.
+    block = [
+        {"text": "20",       "x0": 470, "top": 100},  # OCR fragment of `201`
+        {"text": "r.9400",   "x0": 480, "top": 100},  # OCR fragment of `1.9400`
+        {"text": "313.0000", "x0": 525, "top": 100},  # Aktueller Kurs intact
+        {"text": "1.0430",   "x0": 470, "top": 110},  # FX rate, row below
+        {"text": "1.1743",   "x0": 525, "top": 110},  # current FX rate
+    ]
+    entry, current = _extract_prices(block, qty=Decimal("100"))
+    assert entry is None, f"entry must be None (OCR-shredded), got {entry}"
+    assert current == Decimal("313.0000")
+
+
+def test_extract_prices_rejects_fx_rate_bleed_into_empty_entry_column():
+    """Defensive: if the entry-price column has only an FX-rate-shaped token
+    (because the real price was OCR-shredded), and the current column has a
+    real price on a different row, treat entry as missing rather than report
+    the FX rate as the price."""
+    from decimal import Decimal
+    from pt.importers.pdf.lgt import _extract_prices
+
+    block = [
+        {"text": "313.0000", "x0": 525, "top": 100},  # current price, top row
+        {"text": "1.0430",   "x0": 470, "top": 110},  # FX rate, row below — would be wrong as entry
+    ]
+    entry, current = _extract_prices(block, qty=Decimal("100"))
+    assert entry is None
+    assert current == Decimal("313.0000")
+
+
+def test_extract_prices_keeps_aligned_entry_and_current():
+    """Happy path: both prices on the same visual row → both extracted."""
+    from decimal import Decimal
+    from pt.importers.pdf.lgt import _extract_prices
+
+    block = [
+        {"text": "201.9400", "x0": 470, "top": 100},  # entry
+        {"text": "313.0000", "x0": 525, "top": 100},  # current
+    ]
+    entry, current = _extract_prices(block, qty=Decimal("100"))
+    assert entry == Decimal("201.9400")
+    assert current == Decimal("313.0000")
+
+
+@requires_lgt_pdf
+def test_lgt_parser_recovers_googl_date_but_skips_unrecoverable_price():
+    """Regression-guard: GOOGL's entry date was unreadable (`3't.01.2025`)
+    AND its entry price was OCR-shredded (`r.9400` for `201.9400`). The date
+    is now recoverable; the price is genuinely unrecoverable. We extract
+    GOOGL into `holdings` but `to_transactions` correctly skips it because
+    we won't fabricate a wrong cost basis."""
+    from pt.importers.pdf import parse_pdf, to_transactions
+    from datetime import date
+
+    stmt = parse_pdf(REFERENCE_PDF)
+    by_isin = {h.isin: h for h in stmt.holdings if h.isin}
+    googl = by_isin.get("US02079K3059")
+    assert googl is not None, "GOOGL holding must be parsed (with or without prices)"
+    assert googl.entry_date == date(2025, 1, 31), (
+        "date OCR recovery failed for GOOGL"
+    )
+    assert googl.entry_price is None, (
+        "entry price was OCR-shredded — must NOT fabricate a cost basis"
+    )
+
+    txs = to_transactions(stmt)
+    googl_txs = [t for t in txs if t.get("symbol") == "GOOGL"]
+    assert googl_txs == [], (
+        "GOOGL must be skipped in to_transactions when entry_price is None"
+    )
+
+
 @requires_lgt_pdf
 def test_to_transactions_uses_bare_ticker_as_symbol():
     from pt.importers.pdf import parse_pdf, to_transactions
