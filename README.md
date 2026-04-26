@@ -148,17 +148,36 @@ docker-compose.prod.yml  prod (api + frontend behind nginx)
 
 ## Deployment (production)
 
+Standalone — own TimescaleDB with a persistent named volume `pt_db_data`:
+
 ```bash
-# Default: shared TimescaleDB with claude-trader
-cd ../claude-trader && docker compose up -d timescaledb
-cd ../portfolio
 docker compose -f docker-compose.prod.yml up -d --build
 
-# → http://localhost:5174   (frontend, /api proxied to api container)
+# → http://localhost:5174              frontend (nginx, SPA + /api proxy)
+# → http://localhost:5174/api/health   API health probe via nginx
+# → http://localhost:5174/api/docs     FastAPI Swagger via nginx
 ```
 
-Standalone DB (no claude-trader running): uncomment the `timescaledb` block in
-`docker-compose.prod.yml` and set `PT_DB_HOST=pt-timescaledb`.
+Three containers come up:
+
+| Container | Image | Ports | State on `down` |
+|--|--|--|--|
+| `pt-timescaledb` | timescale/timescaledb:latest-pg16 | 5432 (internal) | volume `pt_db_data` survives |
+| `pt-api` | portfolio-api:latest | 8430 (internal) | stateless |
+| `pt-frontend` | portfolio-frontend:latest (nginx) | `:5174` → 80 | stateless |
+
+Schema is bootstrapped on first DB start by the TimescaleDB image's
+`/docker-entrypoint-initdb.d/` hook:
+
+- `db/init/01_public_schema.sql` → minimal `public.candles` + `public.market_meta`
+- `pt/db/schema_portfolio.sql` (mounted as `02_*.sql`) → `portfolio.*` tables, audit trigger
+
+Reset all data: `docker compose -f docker-compose.prod.yml down -v`
+(drops the volume — irreversible).
+
+To share the DB with claude-trader instead of running our own: point
+`PT_DB_HOST=ct-timescaledb`, attach to claude-trader's compose network, and
+remove the `timescaledb` service from this file.
 
 ## Hard rules
 
