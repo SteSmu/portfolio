@@ -157,7 +157,7 @@ pt perf summary -p 1
 
 ## Status
 
-217 tests green. PDF importer ships for LGT Bank Vermögensaufstellung
+228 tests green. PDF importer ships for LGT Bank Vermögensaufstellung
 including OCR recovery for date / price-column fragments and Bloomberg
 ticker extraction; other brokers are a registry-extension away
 (`pt/importers/pdf/format_detect.py`).
@@ -168,18 +168,24 @@ directly to Yahoo via `_YAHOO_SYMBOL_MAP`.
 
 **Frontend Phase A done** — UX redesign turned the tracker into an
 insight tool. Equity curve + cost-basis overlay on the Dashboard,
-TradingView-style asset chart with tx markers + cost-basis line on
-AssetDetail, TWR/MWR/Risk cards + drawdown view on Performance,
-drillable allocation sunburst, Finviz-style holdings treemap, per-row
-sparklines, light/dark toggle backed by token-driven CSS variables.
-Charts: **Apache ECharts** via the `lib/echarts.ts` theme bridge
-(donut, sunburst, treemap, line, drawdown, sparkline) +
-**lightweight-charts v5** for the AssetDetail price+marker chart.
-Plan stayed `recharts`-free. New backend prereqs: `pt sync snapshots`
-generator (idempotent UPSERT), `GET /api/portfolios/{id}/snapshots`,
-`GET /api/assets/{symbol}/{type}/candles`, `GET .../holdings/sparklines`,
-extended `/performance/summary` with a `timeseries` block (TWR / MWR /
-max DD / vola / Sharpe / Calmar) — null until snapshots exist.
+TradingView-style asset chart with tx markers + cost-basis line + opt-in
+sentiment-tinted news pins on AssetDetail, TWR/MWR/Risk cards +
+drawdown view on Performance, drillable allocation sunburst with a
+stacked-area `over-time` variant fed from `metadata.by_asset_type`,
+Finviz-style holdings treemap, per-row sparklines, Parqet-Wrapped-style
+Year-in-Review at `/year/:year`, light/dark toggle backed by
+token-driven CSS variables. Charts: **Apache ECharts** via the
+`lib/echarts.ts` theme bridge (donut, sunburst, treemap, line,
+drawdown, sparkline, stacked-area) + **lightweight-charts v5** for the
+AssetDetail price+marker chart. Plan stayed `recharts`-free. Equity /
+drawdown views go through `lib/snapshotSeries.ts:pickEquitySeries`,
+which prefers `total_value_base` and FX-converts cost basis when every
+visible snapshot has a base value — without it an EUR portfolio of USD
+assets shows USD numbers labelled like EUR. Backend `/performance/
+summary` feeds per-day external cash flows (buy/transfer_in = +CF,
+sell/transfer_out = −CF) into `TwrSnapshot.cash_flow` so a fresh-money
+buy doesn't book as a return — without that step a 16k buy on a 12k
+portfolio inflated TWR / vola / Sharpe wildly.
 
 Next-up tracked in `.claude/plans/portfolio-bootstrap.md`: Phase 7 (Tax
 DE-Reports), Phase 8 (Income / dividends, FX-aware base-currency
