@@ -8,6 +8,7 @@ import EquityCurve from '../components/charts/EquityCurve'
 import DrawdownChart from '../components/charts/DrawdownChart'
 import PeriodSelector, { type Period, periodStart } from '../components/PeriodSelector'
 import BenchmarkPicker from '../components/BenchmarkPicker'
+import BenchmarkSyncBanner from '../components/BenchmarkSyncBanner'
 import { useBenchmark } from '../state/benchmark'
 import { useBenchmarkOverlay } from '../lib/benchmark'
 
@@ -137,6 +138,15 @@ export default function Performance() {
           </div>
           <BenchmarkPicker />
         </div>
+        {benchmarkSel != null
+          && benchmarkOverlay
+          && benchmarkOverlay.series.length === 0
+          && visibleSnaps.length >= 2 && (
+          <BenchmarkSyncBanner
+            symbol={benchmarkSel.symbol}
+            assetType={benchmarkSel.asset_type}
+          />
+        )}
         {snaps.isLoading ? (
           <div className="skeleton h-72" />
         ) : visibleSnaps.length >= 2 ? (

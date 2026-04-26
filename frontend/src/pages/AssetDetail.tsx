@@ -258,9 +258,7 @@ export default function AssetDetail() {
         )}
         {syncNews.data && <SyncSummary data={syncNews.data} />}
 
-        {news.isLoading && (
-          <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>loading…</p>
-        )}
+        {news.isLoading && <div className="skeleton h-32" />}
         {news.data && news.data.items.length === 0 && (
           <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
             No news cached for this asset yet. Click <em>Refresh news</em> above.

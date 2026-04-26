@@ -14,13 +14,13 @@ export default function Settings() {
   const { activeId } = useActivePortfolio()
   const { theme, resolved, setTheme } = useTheme()
 
-  const { data: portfolio } = useQuery({
+  const { data: portfolio, isLoading: portfolioLoading } = useQuery({
     queryKey: ['portfolio', activeId],
     queryFn: () => api.getPortfolio(activeId!),
     enabled: activeId != null,
   })
 
-  const { data: health } = useQuery({
+  const { data: health, isLoading: healthLoading } = useQuery({
     queryKey: ['health'],
     queryFn: api.health,
     refetchInterval: 30_000,
@@ -63,7 +63,9 @@ export default function Settings() {
         <h2 className="text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>
           Active Portfolio
         </h2>
-        {portfolio ? (
+        {portfolioLoading ? (
+          <div className="skeleton h-32" />
+        ) : portfolio ? (
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
             <dt style={{ color: 'var(--text-secondary)' }}>Name</dt>
             <dd style={{ color: 'var(--text-primary)' }}>{portfolio.name}</dd>
@@ -88,7 +90,9 @@ export default function Settings() {
         <h2 className="text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>
           Backend
         </h2>
-        {health ? (
+        {healthLoading ? (
+          <div className="skeleton h-32" />
+        ) : health ? (
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
             <dt style={{ color: 'var(--text-secondary)' }}>Status</dt>
             <dd>
@@ -112,7 +116,9 @@ export default function Settings() {
             <dd style={{ color: 'var(--text-primary)' }}>{health.counts.news ?? '—'}</dd>
           </dl>
         ) : (
-          <div className="skeleton h-24" />
+          <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+            backend unreachable
+          </p>
         )}
       </section>
 
