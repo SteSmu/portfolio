@@ -43,16 +43,35 @@ import { createChart, LineSeries, createSeriesMarkers } from 'lightweight-charts
 const chart = createChart(container, options)
 const series = chart.addSeries(LineSeries, { color, lineWidth: 2 })
 series.setData([{ time: utcSeconds, value: number }, ...])
-createSeriesMarkers(series, [
+const markers = createSeriesMarkers(series, [
   { time, position: 'belowBar', shape: 'arrowUp',   color: gain, text: 'buy 0.1 @ 84000' },
   { time, position: 'aboveBar', shape: 'arrowDown', color: loss, text: 'sell 0.1 @ 98000' },
 ])
-series.createPriceLine({ price: avgCost, lineStyle: 2, axisLabelVisible: true, title: 'cost basis' })
+markers.setMarkers(nextMarkers)  // mutate without re-mount
+const pl = series.createPriceLine({ price: avgCost, lineStyle: 2, axisLabelVisible: true, title: 'cost basis' })
+series.removePriceLine(pl)        // strip stale lines on data update
 ```
 
 Time is `UTCTimestamp = unix-seconds`. The wrapper re-mounts on theme
 change (via the `useTheme()` hook's `resolved` value) so the colour-
 scheme switch is instant.
+
+**Marker primitive lifecycle.** `createSeriesMarkers(series, [...])` returns
+an `ISeriesMarkersPluginApi` — keep it in a ref and call `setMarkers(...)`
+on subsequent updates instead of calling `createSeriesMarkers` again
+(each call attaches a fresh plugin and the old markers stay until
+unmount). Same for `createPriceLine`: track the returned `IPriceLine` and
+`series.removePriceLine(pl)` before adding a new one, otherwise stale
+lines stack up.
+
+**News overlay (optional).** When `showNews` is true, AssetPriceChart
+draws one `circle`/`inBar` marker per `NewsItem` at `published_at`,
+tinted by `sentiment` (>0 gain, <0 loss, 0 grey). Items on the same UTC
+day are de-duplicated to the strongest-sentiment one to keep the chart
+readable. A click handler subscribed via `chart.subscribeClick` snaps to
+the nearest news pin within ±1 day and opens the article URL in a new
+tab — there is no per-marker click event in v5, so proximity is the only
+way to map a click back to a marker.
 
 ## Theme tokens used by charts
 
@@ -123,6 +142,18 @@ Pattern used by `EquityCurve`'s `benchmark` prop (Dashboard + Performance):
    no implicit fetch — the picker / a future explicit "sync" button is
    the place to trigger backfill.
 
+## Benchmark sync UX
+
+`<BenchmarkPicker>` exposes a small `⟳` button that fires
+`api.syncBenchmark(symbol, 365)` for the current selection and
+invalidates `['benchmark-candles', symbol, asset_type]` so the overlay
+appears as soon as the rows land. Parents (Dashboard + Performance)
+additionally render `<BenchmarkSyncBanner>` above the equity curve when
+the user has a selection but `useBenchmarkOverlay()` returns
+`{name, series: []}` despite `visibleSnaps.length >= 2` — that combination
+means the catalog has no candles yet and an explicit one-shot sync is
+the only way out (the hook deliberately does not auto-fetch).
+
 ## Gotchas
 
 - **lightweight-charts v5 ≠ v4.** v4 used `chart.addLineSeries()`; v5
@@ -130,6 +161,14 @@ Pattern used by `EquityCurve`'s `benchmark` prop (Dashboard + Performance):
   `series.setMarkers()` (v4) to the standalone `createSeriesMarkers()`
   primitive plugin (v5). When debugging, check the installed version
   in `package.json` first.
+- **ECharts cannot resolve `var(--token)` on every property.** The
+  `theme.color` array (read from `--cat-1..8` via `readChartTokens()`)
+  reaches the canvas, but per-series `areaStyle.color: 'var(--cat-3)'`
+  silently falls back to default greys on at least the stacked-area /
+  treemap renderers. Pattern: don't override `color` per-series — let
+  the theme palette do it. If you absolutely must pin a colour, resolve
+  the var with `getComputedStyle(...).getPropertyValue(...).trim()` first
+  (same pattern `AssetPriceChart` uses for `--gain`/`--loss`/`--accent`).
 - **Tree-shaking only works if you import from `echarts/core`.**
   `import * as echarts from 'echarts'` pulls everything (~350 kB gz).
   All chart-type registration must go through `echarts.use([...])`,
