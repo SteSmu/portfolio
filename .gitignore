@@ -58,3 +58,6 @@ sample_pdfs/
 
 # Hook state
 .claude/.arch-loaded
+
+# Subagent worktrees (created by isolation: 'worktree')
+.claude/worktrees/
