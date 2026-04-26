@@ -1,0 +1,56 @@
+[project]
+name = "portfolio-tracker"
+version = "0.1.0"
+description = "Multi-asset portfolio tracking & analytics — read-only, weltklasse UX, korrekte Zahlen"
+authors = [
+    {name = "Stefan", email = "stefan.schmucker@markt.de"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "typer[all]>=0.15.0",
+    "psycopg[binary]>=3.2.0",
+    "pandas>=2.2.0",
+    "rich>=13.9.0",
+    "fastapi>=0.135.3,<0.136.0",
+    "uvicorn[standard]>=0.42.0,<0.43.0",
+    "httpx>=0.28.1,<0.29.0",
+    "aiohttp>=3.10.0",
+    "pdfplumber>=0.11.0",
+    "python-dateutil>=2.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.100.0",
+    "ruff>=0.6.0",
+]
+insights = [
+    "langchain>=1.2.15,<2.0.0",
+    "langchain-openai>=1.1.12,<2.0.0",
+]
+
+[project.scripts]
+pt = "pt.cli:app"
+
+[tool.poetry]
+packages = [{include = "pt"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]

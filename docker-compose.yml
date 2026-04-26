@@ -1,0 +1,48 @@
+# Portfolio Tracker — uses the SAME TimescaleDB instance as claude-trader.
+# Start the DB via the claude-trader docker-compose first, then run portfolio services.
+#
+# Networking: portfolio services attach to claude-trader's default network so they
+# can resolve `ct-timescaledb` as the DB host.
+#
+# Usage:
+#   cd ../claude-trader && docker compose up -d timescaledb
+#   cd ../portfolio    && docker compose up -d
+
+services:
+  api:
+    build: .
+    container_name: pt-api
+    ports:
+      - "${PT_API_PORT:-8430}:8430"
+    environment:
+      PT_DB_HOST: ct-timescaledb
+      PT_DB_PORT: "5432"
+      PT_DB_NAME: ${PT_DB_NAME:-claude_trader}
+      PT_DB_USER: ${PT_DB_USER:-trader}
+      PT_DB_PASSWORD: ${PT_DB_PASSWORD:-trader_dev_2024}
+      PT_DB_SCHEMA: ${PT_DB_SCHEMA:-portfolio}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      MARKETAUX_API_KEY: ${MARKETAUX_API_KEY:-}
+    volumes:
+      - ./imports:/app/imports
+    networks:
+      - claude-trader-net
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: pt-frontend
+    ports:
+      - "${PT_FRONTEND_PORT:-5174}:80"
+    depends_on:
+      - api
+    networks:
+      - claude-trader-net
+    restart: unless-stopped
+
+networks:
+  claude-trader-net:
+    external: true
+    name: claude-trader_default

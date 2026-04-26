@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+dist/
+build/
+*.whl
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+.vite/
+
+# Environment & secrets
+.env
+.env.local
+*.key
+*.pem
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Cortex
+# .cortex.json is project-local (kept in repo for team-sharing)
+
+# Local data dumps / temp
+.tmp/
+.cache/
+*.log
+.scratch/
+
+# Imported broker statements (PII!)
+imports/
+sample_pdfs/
+*.pdf
+!docs/**/*.pdf
+
+# DB dumps (might contain PII)
+*.sql.dump
+*.backup
