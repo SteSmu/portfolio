@@ -78,15 +78,19 @@ export default function AllocationOverTime({ snapshots, height = 360 }: Props) {
       scale: true,
       axisLabel: { formatter: (v) => formatAxisMoney(v as number) },
     },
-    series: types.map((t, i) => ({
+    series: types.map(t => ({
       name: t,
       type: 'line',
       stack: 'allocation',
       showSymbol: false,
       smooth: false,
       lineStyle: { width: 1 },
-      areaStyle: { opacity: 0.85, color: `var(--cat-${(i % 8) + 1})` },
-      itemStyle: { color: `var(--cat-${(i % 8) + 1})` },
+      // Colour comes from the theme's categorical palette (--cat-1..8) —
+      // setting an explicit `color: var(--...)` here breaks because
+      // ECharts can't resolve CSS vars on `areaStyle.color`. Relying on
+      // the palette also keeps the colours in sync with the donut/sunburst
+      // variants on the same page.
+      areaStyle: { opacity: 0.85 },
       emphasis: { focus: 'series' },
       data: series[t],
     })),
