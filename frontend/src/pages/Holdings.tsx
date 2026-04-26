@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
 import { fmtDate, fmtMoney, fmtPrice, fmtQty, fmtPct, pnlClass } from '../lib/format'
 import EmptyPortfolio from '../components/EmptyPortfolio'
+import PdfImport from '../components/PdfImport'
 
 export default function Holdings() {
   const { activeId } = useActivePortfolio()
@@ -25,9 +26,13 @@ export default function Holdings() {
   if (error)     return <p className="loss">Error: {(error as Error).message}</p>
   if (!data || data.length === 0) {
     return (
-      <div className="card text-zinc-400 text-sm">
-        No open positions yet. Record buys on the{' '}
-        <a href="/transactions" className="text-blue-400 hover:underline">Transactions</a> page.
+      <div className="space-y-4">
+        <PdfImport portfolioId={activeId} />
+        <div className="card text-zinc-400 text-sm">
+          No open positions yet. Record buys on the{' '}
+          <a href="/transactions" className="text-blue-400 hover:underline">Transactions</a> page,
+          or import a broker statement above.
+        </div>
       </div>
     )
   }
@@ -40,6 +45,8 @@ export default function Holdings() {
 
   return (
     <div className="space-y-4">
+      <PdfImport portfolioId={activeId} />
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Holdings ({data.length})</h1>
         <button

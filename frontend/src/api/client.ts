@@ -200,6 +200,71 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ symbol, asset_type: assetType, sources }),
     }),
+
+  // PDF import
+  importPdfDryRun: async (portfolioId: number, file: File): Promise<ImportPdfDryRun> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${BASE}/portfolios/${portfolioId}/import/pdf?dry_run=true`,
+                            { method: 'POST', body: fd })
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}))
+      throw new Error(`HTTP ${res.status}: ${detail?.detail ?? 'import failed'}`)
+    }
+    return res.json()
+  },
+  importPdfCommit: async (portfolioId: number, file: File): Promise<ImportPdfResult> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${BASE}/portfolios/${portfolioId}/import/pdf`,
+                            { method: 'POST', body: fd })
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}))
+      throw new Error(`HTTP ${res.status}: ${detail?.detail ?? 'import failed'}`)
+    }
+    return res.json()
+  },
+}
+
+export type ImportPdfDryRun = {
+  dry_run: true
+  parser: string
+  customer: string
+  statement_date: string
+  base_currency: string
+  file_name: string
+  file_hash: string
+  holdings_parsed: number
+  cash_parsed: number
+  transactions_planned: number
+  transactions: Array<{
+    symbol: string
+    asset_type: string
+    action: string
+    executed_at: string
+    quantity: string
+    price: string
+    trade_currency: string
+    fees: string
+    note: string | null
+    source: string
+  }>
+  warnings: string[]
+}
+
+export type ImportPdfResult = {
+  dry_run: false
+  parser: string
+  file_name: string
+  file_hash: string
+  customer: string
+  statement_date: string
+  transactions_added: number
+  transactions_skipped: number
+  holdings_parsed: number
+  cash_parsed: number
+  warnings: string[]
+  skipped_reason: string | null
 }
 
 export type NewsItem = {

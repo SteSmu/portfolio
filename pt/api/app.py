@@ -16,6 +16,7 @@ from pt import __version__
 from pt.api.middleware import RequestLogMiddleware, install_logging_filter
 from pt.api.routes.assets import router as assets_router
 from pt.api.routes.holdings import router as holdings_router
+from pt.api.routes.imports import router as imports_router
 from pt.api.routes.news import router as news_router
 from pt.api.routes.performance import router as performance_router
 from pt.api.routes.portfolios import router as portfolios_router
@@ -54,6 +55,7 @@ app.include_router(assets_router, prefix=API_PREFIX)
 app.include_router(performance_router, prefix=API_PREFIX)
 app.include_router(sync_router, prefix=API_PREFIX)
 app.include_router(news_router, prefix=API_PREFIX)
+app.include_router(imports_router, prefix=API_PREFIX)
 
 
 @app.get("/api/health")
