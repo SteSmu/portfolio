@@ -25,10 +25,12 @@ import httpx
 import typer
 from rich.console import Console
 
+from pt.api.routes.sync import _YAHOO_SYMBOL_MAP, _yahoo_symbol
 from pt.data import coingecko as _cg
 from pt.data import frankfurter as _fx
 from pt.data import store as _store
 from pt.data import twelve_data as _td
+from pt.data import yahoo as _yh
 from pt.jobs import daily as _daily
 from pt.jobs import snapshots as _snap
 
@@ -117,7 +119,37 @@ def cmd_stock(
     exchange: Optional[str] = typer.Option(None, "--exchange", "-e"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Sync OHLCV bars for one stock/ETF from Twelve Data."""
+    """Sync OHLCV bars for one stock/ETF.
+
+    Mapped non-US tickers (`_YAHOO_SYMBOL_MAP`) auto-route to Yahoo so a
+    manual sync can't pollute candles with a same-ticker US listing
+    (bare 'AIR' on TD = AAR Corp, not Airbus). Daily-only for those.
+    """
+    sym = symbol.upper()
+    if sym in _YAHOO_SYMBOL_MAP and _YAHOO_SYMBOL_MAP[sym] != sym:
+        if interval not in ("1day", "1d"):
+            _emit_error(
+                json_output,
+                f"{sym} routes to Yahoo ({_YAHOO_SYMBOL_MAP[sym]}); "
+                "Yahoo only emits daily bars. Drop --interval or use a US ticker.",
+                exit_code=2,
+            )
+        try:
+            candles = _yh.fetch_time_series(
+                _yahoo_symbol(sym), days=outputsize, asset_type=asset_type,
+                db_symbol=sym, exchange=exchange,
+            )
+        except _yh.YahooFinanceError as e:
+            _emit_error(json_output, f"Yahoo request failed: {e}", exit_code=1)
+        n = _store.insert_candles(candles)
+        _emit(
+            json_output,
+            {"ok": True, "source": "yahoo", "symbol": sym,
+             "yahoo_symbol": _yahoo_symbol(sym), "interval": "1d", "rows_written": n},
+            f"[green]✓[/green] Yahoo: wrote {n} 1d bar(s) for {sym} (via {_yahoo_symbol(sym)}).",
+        )
+        return
+
     try:
         candles = _td.fetch_time_series(
             symbol, interval=interval, outputsize=outputsize,
@@ -181,9 +213,9 @@ def cmd_snapshots(
             "rows_computed": len(rows),
             "from": rows[0].snapshot_date.isoformat(),
             "to": latest.snapshot_date.isoformat(),
-            "total_value": str(latest.total_value),
+            "total_value": str(latest.total_value) if latest.total_value is not None else None,
             "total_cost_basis": str(latest.total_cost_basis),
-            "unrealized_pnl": str(latest.unrealized_pnl),
+            "unrealized_pnl": str(latest.unrealized_pnl) if latest.unrealized_pnl is not None else None,
             "realized_pnl": str(latest.realized_pnl),
             "holdings_count": latest.holdings_count,
         })

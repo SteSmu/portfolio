@@ -170,3 +170,87 @@ def test_get_for_symbol_returns_correct_row(isolated_portfolio):
     assert row["quantity"] == Decimal("5")
 
     assert holdings.get_for_symbol(isolated_portfolio, "GOOG", "stock") is None
+
+
+# -- FX-aware base-currency totals on enriched holdings ------------------------
+
+
+def test_with_prices_adds_base_fields_when_fx_available(isolated_portfolio):
+    """Per-row USD candle + EURUSD rate ⇒ market_value_base in EUR."""
+    from datetime import date as _date
+    from pt.data import store
+    from pt.db import holdings
+    from pt.db.connection import get_conn
+
+    sym = "FXBASEUSD"
+    fx_time = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    candle_time = datetime(2026, 4, 1, 23, 59, 59, tzinfo=timezone.utc)
+
+    store.insert_fx_rates([{
+        "time": fx_time, "source": "frankfurter", "symbol": "EURUSD",
+        "value": Decimal("1.10"), "metadata": {},
+    }])
+    store.insert_candles([{
+        "time": candle_time, "symbol": sym, "interval": "1day",
+        "open": Decimal("100"), "high": Decimal("100"), "low": Decimal("100"),
+        "close": Decimal("100"), "volume": Decimal("0"),
+        "asset_type": "stock", "source": "test",
+    }])
+    _add(isolated_portfolio, sym, "buy", "3", "90", currency="USD",
+         when=datetime(2026, 3, 30, tzinfo=timezone.utc))
+
+    try:
+        rows = holdings.list_for_portfolio_with_prices(isolated_portfolio)
+        row = next(r for r in rows if r["symbol"] == sym)
+        assert row["market_value"] == Decimal("300")  # 3 x 100 USD
+        assert row["market_value_base"] is not None
+        # 300 USD / 1.10 EURUSD = 272.7272... EUR
+        from pt.performance.money import quantize_money
+        assert quantize_money(row["market_value_base"]) == Decimal("272.73")
+        assert row["total_cost_base"] is not None
+        assert row["unrealized_pnl_base"] is not None
+    finally:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM public.market_meta WHERE source='frankfurter' AND symbol='EURUSD' AND time=%s", (fx_time,))
+            cur.execute("DELETE FROM public.candles WHERE symbol=%s AND interval='1day'", (sym,))
+            conn.commit()
+
+
+def test_with_prices_base_fields_are_none_when_fx_missing(isolated_portfolio):
+    """No EUR<->GBP rate path ⇒ *_base fields are None (not zero)."""
+    from pt.data import store
+    from pt.db import holdings
+    from pt.db.connection import get_conn
+
+    sym = "FXBASEGBP"
+    candle_time = datetime(2026, 4, 1, 23, 59, 59, tzinfo=timezone.utc)
+
+    store.insert_candles([{
+        "time": candle_time, "symbol": sym, "interval": "1day",
+        "open": Decimal("50"), "high": Decimal("50"), "low": Decimal("50"),
+        "close": Decimal("50"), "volume": Decimal("0"),
+        "asset_type": "stock", "source": "test",
+    }])
+    _add(isolated_portfolio, sym, "buy", "2", "40", currency="GBP",
+         when=datetime(2026, 3, 30, tzinfo=timezone.utc))
+
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM public.market_meta WHERE source='frankfurter' "
+                "AND symbol IN ('EURGBP','GBPEUR') AND time::date <= %s",
+                (datetime(2026, 4, 1).date(),),
+            )
+            conn.commit()
+        rows = holdings.list_for_portfolio_with_prices(isolated_portfolio)
+        row = next(r for r in rows if r["symbol"] == sym)
+        assert row["market_value"] == Decimal("100")  # 2 x 50 GBP
+        assert row["market_value_base"] is None
+        assert row["total_cost_base"] is None
+        assert row["unrealized_pnl_base"] is None
+    finally:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM public.candles WHERE symbol=%s AND interval='1day'", (sym,))
+            conn.commit()
+
+

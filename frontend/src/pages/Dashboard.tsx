@@ -53,7 +53,11 @@ export default function Dashboard() {
 
   if (activeId == null) return <EmptyPortfolio />
 
-  const latest = snaps.data?.snapshots.at(-1)
+  // Latest snapshot with a real value — backfill rows that pre-date the
+  // candle history get total_value=null and would otherwise dash the KPI.
+  const latest = snaps.data?.snapshots
+    .filter(s => s.total_value != null)
+    .at(-1)
   const visibleSnaps = useMemo(() => {
     if (!snaps.data) return []
     if (!start) return snaps.data.snapshots
@@ -71,7 +75,7 @@ export default function Dashboard() {
     ? Number(baseAvailable ? latest.total_value_base : latest.total_value)
     : null
   const costBasis  = latest ? Number(latest.total_cost_basis) : null
-  const unrealized = latest ? Number(latest.unrealized_pnl) : null
+  const unrealized = latest && latest.unrealized_pnl != null ? Number(latest.unrealized_pnl) : null
   const realized   = summary.data ? Number(summary.data.realized_pnl) : null
 
   const heroDeltas = useMemo<[string, number | null][]>(() => {
@@ -192,7 +196,7 @@ function tone(v: number | null | undefined): 'gain' | 'loss' | undefined {
   return undefined
 }
 
-type DeltaSnap = { date: string; total_value: string; total_value_base: string | null }
+type DeltaSnap = { date: string; total_value: string | null; total_value_base: string | null }
 
 function deltaPct(
   snaps: DeltaSnap[],

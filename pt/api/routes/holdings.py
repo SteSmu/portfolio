@@ -74,23 +74,15 @@ def holding_sparklines(
 
 @router.get("/{symbol}/{asset_type}")
 def get_holding(portfolio_id: int, symbol: str, asset_type: str) -> dict:
-    row = _holdings.get_for_symbol(portfolio_id, symbol, asset_type)
-    if not row:
-        raise HTTPException(status_code=404,
-                            detail=f"No holding {symbol} ({asset_type}) in portfolio {portfolio_id}.")
-    # Single-symbol path also enriches with price for parity with list view.
-    price, ts = _prices.latest_close(symbol, asset_type)
-    row["current_price"] = price
-    row["last_price_at"] = ts
-    if price is not None and row["quantity"] is not None:
-        market_value = row["quantity"] * price
-        from decimal import Decimal
-        cost = row.get("total_cost") or Decimal("0")
-        row["market_value"] = market_value
-        row["unrealized_pnl"] = market_value - cost
-        row["unrealized_pnl_pct"] = float((market_value - cost) / cost) if cost > 0 else None
-    else:
-        row["market_value"] = None
-        row["unrealized_pnl"] = None
-        row["unrealized_pnl_pct"] = None
-    return row
+    """Single-holding aggregate. Parity with the list endpoint: enriched
+    with the same `*_base` FX-converted fields so callers don't get a
+    different shape depending on which path they hit."""
+    rows = _holdings.list_for_portfolio_with_prices(portfolio_id, include_zero=True)
+    sym_u = symbol.upper()
+    for r in rows:
+        if r["symbol"] == sym_u and r["asset_type"] == asset_type:
+            return r
+    raise HTTPException(
+        status_code=404,
+        detail=f"No holding {symbol} ({asset_type}) in portfolio {portfolio_id}.",
+    )

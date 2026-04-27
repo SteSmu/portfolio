@@ -117,7 +117,7 @@ def _step_snapshots(portfolio_ids: list[int]) -> dict[str, Any]:
             out.append({
                 "portfolio_id": pid, "ok": True,
                 "snapshot_date": row.snapshot_date.isoformat(),
-                "total_value": str(row.total_value),
+                "total_value": str(row.total_value) if row.total_value is not None else None,
                 "total_value_base": str(row.total_value_base) if row.total_value_base is not None else None,
                 "holdings_count": row.holdings_count,
             })

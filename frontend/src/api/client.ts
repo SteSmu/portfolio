@@ -48,6 +48,12 @@ export type Holding = {
   market_value?: string | null
   unrealized_pnl?: string | null
   unrealized_pnl_pct?: number | null
+  // FX-converted to the portfolio's base_currency. `null` when the source
+  // currency has no Frankfurter rate path at-or-before `last_price_at` —
+  // surface a "run `pt sync fx`" hint rather than substituting zero.
+  market_value_base?: string | null
+  unrealized_pnl_base?: string | null
+  total_cost_base?: string | null
 }
 
 export type AutoPriceSyncResponse = {
@@ -91,7 +97,11 @@ export type PerformanceSummary = {
 
 export type Snapshot = {
   date: string
-  total_value: string
+  // `null` when the snapshot couldn't price ANY holding — e.g. backfill on
+  // a date that pre-dates the candle history. Plotting 0 there falsely
+  // draws the equity curve to zero on every history-less day; charts must
+  // skip nulls instead.
+  total_value: string | null
   // FX-aware total in the portfolio's base_currency. `null` when at least
   // one source currency is missing a Frankfurter rate at-or-before this
   // snapshot — UI should fall back to `total_value` and surface a
@@ -99,7 +109,7 @@ export type Snapshot = {
   total_value_base: string | null
   total_cost_basis: string
   realized_pnl: string
-  unrealized_pnl: string
+  unrealized_pnl: string | null
   cash: string
   holdings_count: number
   metadata: {

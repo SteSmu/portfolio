@@ -99,21 +99,28 @@ def list_for_portfolio_with_prices(
     Adds per-row keys:
       - current_price        Decimal | None — latest close from public.candles
       - last_price_at        datetime | None — when that close was recorded
-      - market_value         Decimal | None — quantity * current_price
-      - unrealized_pnl       Decimal | None — market_value - total_cost
+      - market_value         Decimal | None — quantity * current_price (native ccy)
+      - unrealized_pnl       Decimal | None — market_value - total_cost (native ccy)
       - unrealized_pnl_pct   float    | None — unrealized_pnl / total_cost
+      - market_value_base    Decimal | None — market_value FX-converted to the
+                                              portfolio's base_currency
+      - unrealized_pnl_base  Decimal | None — same conversion for P&L
+      - total_cost_base      Decimal | None — same conversion for cost basis
 
-    Currency note: current_price comes from `candles.close` whose currency
-    follows the data source (Coingecko = vs_currency, Twelve Data = trade
-    currency). For now we surface raw values plus the holding's `currency`
-    so the UI can decide whether to FX-convert. Cross-currency conversion
-    lives in `performance.money.convert` and is not auto-applied here.
+    The `*_base` fields are None when the holding's source currency has no
+    Frankfurter rate path at-or-before `last_price_at`. Frontend treats null
+    as "FX gap, run `pt sync fx`" rather than zero.
     """
+    from pt.db import portfolios as _portfolios
     from pt.db import prices as _prices
+    from pt.performance import money as _money
 
     rows = list_for_portfolio(portfolio_id, include_zero=include_zero)
     if not rows:
         return rows
+
+    portfolio = _portfolios.get(portfolio_id)
+    base_ccy = (portfolio or {}).get("base_currency") or "EUR"
 
     keys = [(r["symbol"], r["asset_type"]) for r in rows]
     price_map = _prices.latest_close_many(keys)
@@ -126,11 +133,25 @@ def list_for_portfolio_with_prices(
             r["market_value"] = None
             r["unrealized_pnl"] = None
             r["unrealized_pnl_pct"] = None
+            r["market_value_base"] = None
+            r["unrealized_pnl_base"] = None
+            r["total_cost_base"] = None
             continue
         market_value = r["quantity"] * price
-        unrealized = market_value - (r["total_cost"] or Decimal("0"))
+        cost = r["total_cost"] or Decimal("0")
+        unrealized = market_value - cost
         r["market_value"] = market_value
         r["unrealized_pnl"] = unrealized
-        cost = r["total_cost"] or Decimal("0")
         r["unrealized_pnl_pct"] = float(unrealized / cost) if cost > 0 else None
+
+        src_ccy = (r.get("currency") or base_ccy).upper()
+        on_date = ts.date() if ts is not None else None
+        try:
+            r["market_value_base"]   = _money.convert(market_value, src_ccy, base_ccy, on_date=on_date)
+            r["unrealized_pnl_base"] = _money.convert(unrealized,   src_ccy, base_ccy, on_date=on_date)
+            r["total_cost_base"]     = _money.convert(cost,         src_ccy, base_ccy, on_date=on_date)
+        except (ValueError, LookupError):
+            r["market_value_base"] = None
+            r["unrealized_pnl_base"] = None
+            r["total_cost_base"] = None
     return rows

@@ -53,7 +53,10 @@ export function useBenchmarkOverlay(
     const all = candles.data?.candles ?? []
     if (all.length === 0) return { name: selected.symbol, series: [] }
 
-    const firstSnap = visibleSnaps[0]
+    // Anchor to the first snapshot with a real value — leading nulls
+    // (backfill rows pre-dating the candle history) would otherwise pin
+    // the overlay's `factor` to NaN/0.
+    const firstSnap = visibleSnaps.find(s => s.total_value != null) ?? visibleSnaps[0]
     // Trim benchmark candles to the snapshot window (start-aligned overlay).
     const fromDate = firstSnap.date
     const inWindow = all.filter(c => isoDate(c.time) >= fromDate && c.close != null)
@@ -63,7 +66,11 @@ export function useBenchmarkOverlay(
     if (!Number.isFinite(firstClose) || firstClose <= 0) {
       return { name: selected.symbol, series: [] }
     }
-    const factor = Number(firstSnap.total_value) / firstClose
+    const firstValue = Number(firstSnap.total_value)
+    if (!Number.isFinite(firstValue) || firstValue <= 0) {
+      return { name: selected.symbol, series: [] }
+    }
+    const factor = firstValue / firstClose
 
     const series: Array<[string, number]> = inWindow.map(c => [
       isoDate(c.time),

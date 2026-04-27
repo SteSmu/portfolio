@@ -64,7 +64,39 @@ def sync_stock(
     asset_type: str = "stock",
     exchange: str | None = None,
 ) -> dict:
-    """Sync OHLCV bars for one Twelve Data symbol."""
+    """Sync OHLCV bars for one stock/ETF symbol.
+
+    Mapped non-US tickers (`_YAHOO_SYMBOL_MAP`) route straight to Yahoo so a
+    manual sync can't pollute `public.candles` with a same-ticker US listing
+    (e.g. bare "AIR" on TD = AAR Corp, not Airbus). Daily-only for those —
+    a non-default `interval` is rejected to keep the candle stream clean.
+    """
+    sym = symbol.upper()
+    if sym in _YAHOO_SYMBOL_MAP and _YAHOO_SYMBOL_MAP[sym] != sym:
+        if interval not in ("1day", "1d"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{sym} routes to Yahoo Finance ({_YAHOO_SYMBOL_MAP[sym]}); "
+                    "Yahoo fetcher only emits daily bars. Drop --interval or use a US ticker."
+                ),
+            )
+        try:
+            candles = _yh.fetch_time_series(
+                _yahoo_symbol(sym), days=outputsize, asset_type=asset_type,
+                db_symbol=sym, exchange=exchange,
+            )
+        except _yh.YahooFinanceError as e:
+            raise HTTPException(status_code=502, detail=f"Yahoo request failed: {e}")
+        n = _store.insert_candles(candles)
+        return {
+            "source": "yahoo",
+            "symbol": sym,
+            "yahoo_symbol": _yahoo_symbol(sym),
+            "interval": candles[0]["interval"] if candles else "1d",
+            "rows_written": n,
+        }
+
     try:
         candles = _td.fetch_time_series(
             symbol, interval=interval, outputsize=outputsize,

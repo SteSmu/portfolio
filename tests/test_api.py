@@ -243,3 +243,87 @@ def test_performance_realized_filters_by_year(client, isolated_portfolio):
 def test_performance_invalid_method_returns_400(client, isolated_portfolio):
     r = client.get(f"/api/portfolios/{isolated_portfolio}/performance/summary?method=bogus")
     assert r.status_code == 400
+
+
+# -------------------- /api/sync/stock symbol-routing guard --------------------
+
+def test_sync_stock_routes_mapped_symbol_to_yahoo(client, monkeypatch):
+    """Bare 'AIR' must NOT be sent to Twelve Data — TD returns AAR Corp (US)
+    instead of Airbus (Paris) and pollutes public.candles with USD prices
+    keyed as if they were EUR. Manual `pt sync stock AIR` and
+    `POST /api/sync/stock?symbol=AIR` both have to route to Yahoo via
+    `_YAHOO_SYMBOL_MAP[AIR] = AIR.PA`.
+    """
+    from pt.api.routes import sync as _sync_routes
+
+    td_called = {"called": False}
+    yahoo_called = {"called": False, "symbol": None}
+
+    def _fake_td(*args, **kwargs):
+        td_called["called"] = True
+        raise AssertionError("Twelve Data must NOT be called for mapped symbols")
+
+    def _fake_yahoo(yahoo_symbol, **kwargs):
+        yahoo_called["called"] = True
+        yahoo_called["symbol"] = yahoo_symbol
+        return [{
+            "time": datetime(2026, 4, 1, 23, 59, 59, tzinfo=timezone.utc),
+            "symbol": kwargs.get("db_symbol", yahoo_symbol).upper(),
+            "interval": "1d",
+            "open": 170.0, "high": 172.0, "low": 168.0, "close": 171.0,
+            "volume": 1.0, "source": "yahoo", "asset_type": kwargs.get("asset_type", "stock"),
+            "exchange": kwargs.get("exchange"),
+        }]
+
+    def _no_write(rows):
+        return len(rows)
+
+    monkeypatch.setattr(_sync_routes._td, "fetch_time_series", _fake_td)
+    monkeypatch.setattr(_sync_routes._yh, "fetch_time_series", _fake_yahoo)
+    monkeypatch.setattr(_sync_routes._store, "insert_candles", _no_write)
+
+    r = client.post("/api/sync/stock?symbol=AIR&outputsize=10")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"] == "yahoo"
+    assert body["yahoo_symbol"] == "AIR.PA"
+    assert yahoo_called["called"] is True
+    assert yahoo_called["symbol"] == "AIR.PA"
+    assert td_called["called"] is False
+
+
+def test_sync_stock_rejects_intraday_for_mapped_symbol(client):
+    """Mapped symbols only get daily Yahoo bars — non-daily intervals
+    return 400 rather than silently falling back to TD."""
+    r = client.post("/api/sync/stock?symbol=AIR&interval=1h&outputsize=10")
+    assert r.status_code == 400
+    assert "Yahoo" in r.json()["detail"]
+
+
+def test_sync_stock_passes_through_us_ticker_to_twelve_data(client, monkeypatch):
+    """Bare US tickers (not in `_YAHOO_SYMBOL_MAP`) keep going through TD."""
+    from pt.api.routes import sync as _sync_routes
+
+    yh_called = {"called": False}
+
+    def _fake_td(symbol, **kwargs):
+        return [{
+            "time": datetime(2026, 4, 1, 23, 59, 59, tzinfo=timezone.utc),
+            "symbol": symbol.upper(), "interval": "1day",
+            "open": 100.0, "high": 105.0, "low": 95.0, "close": 102.0,
+            "volume": 1.0, "source": "twelve_data", "asset_type": "stock",
+            "exchange": None,
+        }]
+
+    def _fake_yh(*args, **kwargs):
+        yh_called["called"] = True
+        raise AssertionError("Yahoo must NOT be called for unmapped US tickers")
+
+    monkeypatch.setattr(_sync_routes._td, "fetch_time_series", _fake_td)
+    monkeypatch.setattr(_sync_routes._yh, "fetch_time_series", _fake_yh)
+    monkeypatch.setattr(_sync_routes._store, "insert_candles", lambda rows: len(rows))
+
+    r = client.post("/api/sync/stock?symbol=AAPL&outputsize=10")
+    assert r.status_code == 200
+    assert r.json()["source"] == "twelve_data"
+    assert yh_called["called"] is False

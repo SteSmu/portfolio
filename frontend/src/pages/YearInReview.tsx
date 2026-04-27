@@ -57,7 +57,9 @@ export default function YearInReview() {
   }, [txs.data, yearStart, yearEnd])
 
   const yearSparkline = useMemo(() =>
-    snapsInYear.map(s => ({ time: s.date, close: s.total_value })),
+    snapsInYear
+      .filter(s => s.total_value != null)
+      .map(s => ({ time: s.date, close: s.total_value as string })),
     [snapsInYear])
 
   const heroStats = useMemo(() => computeHero(snapsInYear), [snapsInYear])

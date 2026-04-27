@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
 import { fmtDate, fmtMoney, fmtPct, fmtPrice, fmtQty, pnlClass } from '../lib/format'
+import type { Holding } from '../api/client'
 import EmptyPortfolio from '../components/EmptyPortfolio'
 import PdfImport from '../components/PdfImport'
 import Sparkline from '../components/charts/Sparkline'
@@ -20,6 +21,11 @@ export default function Holdings() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['holdings', activeId],
     queryFn: () => api.listHoldings(activeId!),
+    enabled: activeId != null,
+  })
+  const portfolio = useQuery({
+    queryKey: ['portfolio', activeId],
+    queryFn: () => api.getPortfolio(activeId!),
     enabled: activeId != null,
   })
   const sparks = useQuery({
@@ -51,11 +57,18 @@ export default function Holdings() {
     )
   }
 
-  const totalMarketValue = data.reduce((s, h) =>
-    h.market_value ? s + Number(h.market_value) : s, 0)
-  const totalUnrealized  = data.reduce((s, h) =>
-    h.unrealized_pnl ? s + Number(h.unrealized_pnl) : s, 0)
-  const totalCost = data.reduce((s, h) => s + Number(h.total_cost || 0), 0)
+  // Sum FX-converted base-currency fields so cross-currency holdings (USD,
+  // CHF, EUR, …) reconcile against the Dashboard hero (which reads
+  // `total_value_base` from the latest snapshot). Summing native-currency
+  // `market_value` straight across mixed-currency rows treats USD as EUR
+  // and produces a misleading top-line — the original symptom of this fix.
+  const baseCcy = portfolio.data?.base_currency ?? 'EUR'
+  const sumBase = (key: keyof Pick<Holding, 'market_value_base' | 'unrealized_pnl_base' | 'total_cost_base'>) =>
+    data.reduce((s, h) => h[key] != null ? s + Number(h[key]) : s, 0)
+  const totalMarketValue = sumBase('market_value_base')
+  const totalUnrealized  = sumBase('unrealized_pnl_base')
+  const totalCost        = sumBase('total_cost_base')
+  const fxGapRows = data.filter(h => h.current_price != null && h.market_value_base == null).length
   const havePrices = data.some(h => h.current_price != null)
   const series = sparks.data?.series ?? {}
 
@@ -94,11 +107,19 @@ export default function Holdings() {
       )}
 
       {havePrices && (
-        <div className="card grid grid-cols-2 md:grid-cols-3 gap-4">
-          <Stat label="Market value" value={fmtMoney(totalMarketValue)} />
-          <Stat label="Unrealized P&L" value={fmtMoney(totalUnrealized)}
-                pnl={totalUnrealized} />
-          <Stat label="Cost basis" value={fmtMoney(totalCost)} />
+        <div className="card">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <Stat label={`Market value (${baseCcy})`} value={fmtMoney(totalMarketValue)} />
+            <Stat label={`Unrealized P&L (${baseCcy})`} value={fmtMoney(totalUnrealized)}
+                  pnl={totalUnrealized} />
+            <Stat label={`Cost basis (${baseCcy})`} value={fmtMoney(totalCost)} />
+          </div>
+          {fxGapRows > 0 && (
+            <p className="text-xs mt-2" style={{ color: 'var(--loss)' }}>
+              ⚠ {fxGapRows} row(s) missing FX rate — totals exclude them.
+              Run <code>pt sync fx --base {baseCcy} --days 400</code>.
+            </p>
+          )}
         </div>
       )}
 

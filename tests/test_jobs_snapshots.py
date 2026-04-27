@@ -181,3 +181,58 @@ def test_total_value_base_is_none_when_fx_missing(isolated_portfolio):
                 (sym,),
             )
             conn.commit()
+
+
+# -- None-vs-zero semantics for unpriceable snapshots --------------------------
+
+@requires_db
+def test_total_value_is_none_when_no_holding_can_be_priced(isolated_portfolio):
+    """Backfill on a date that pre-dates the candle history must NOT write
+    total_value=0 — that would draw the equity curve to zero on every
+    history-less day. None signals 'couldn't price' so the chart can skip.
+    """
+    pid = isolated_portfolio
+    _tx.insert(
+        portfolio_id=pid, symbol="UNPRICED", asset_type="stock", action="buy",
+        executed_at=datetime(2026, 1, 5, tzinfo=timezone.utc),
+        quantity=Decimal("10"), price=Decimal("100"),
+        trade_currency="USD", source="test",
+    )
+    # No candles seeded for UNPRICED — the lookup returns None.
+    row = _snap.compute_snapshot(pid, date(2026, 1, 6))
+
+    assert row.total_value is None, "open holdings + no prices ⇒ total_value None"
+    assert row.unrealized_pnl is None
+    assert row.total_value_base is None
+    # Cost basis is always known from the tx log even with no prices.
+    assert row.total_cost_basis == Decimal("1000")
+    # holdings_count still reports the open position so the UI can say "1 holding, no price yet".
+    assert row.holdings_count == 1
+
+
+@requires_db
+def test_empty_portfolio_snapshot_stays_zero_not_none(isolated_portfolio):
+    """No transactions at all → total_value=0 (not None). Empty portfolios
+    legitimately value at zero; only OPEN-but-unpriced holdings warrant None."""
+    pid = isolated_portfolio
+    row = _snap.compute_snapshot(pid, date(2026, 1, 6))
+    assert row.total_value == Decimal("0")
+    assert row.holdings_count == 0
+
+
+@requires_db
+def test_snapshot_persists_none_total_value(isolated_portfolio):
+    """Round-trip: compute → write → read back must preserve None."""
+    pid = isolated_portfolio
+    _tx.insert(
+        portfolio_id=pid, symbol="UNPRICED2", asset_type="stock", action="buy",
+        executed_at=datetime(2026, 1, 5, tzinfo=timezone.utc),
+        quantity=Decimal("1"), price=Decimal("10"),
+        trade_currency="USD", source="test",
+    )
+    row = _snap.compute_snapshot(pid, date(2026, 1, 6))
+    _snap.write_snapshot(row)
+    rows = _snap.list_snapshots(pid)
+    assert len(rows) == 1
+    assert rows[0]["total_value"] is None
+    assert rows[0]["unrealized_pnl"] is None

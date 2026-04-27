@@ -153,6 +153,18 @@ DO $$ BEGIN
         ADD COLUMN total_value_base NUMERIC(20,8);
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
+-- Allow NULL on total_value (and unrealized_pnl) for snapshots where no
+-- holding could be priced — e.g. a backfill on a date that pre-dates the
+-- candle history. Storing 0 there falsely shows "portfolio worth nothing"
+-- on the equity curve; NULL lets the chart skip the point cleanly.
+DO $$ BEGIN
+    ALTER TABLE portfolio.portfolio_snapshots ALTER COLUMN total_value DROP NOT NULL;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE portfolio.portfolio_snapshots ALTER COLUMN unrealized_pnl DROP NOT NULL;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 -- TimescaleDB-Hypertable (geht nur fuer eine Tabelle ohne Foreign-Keys auf andere
 -- Hypertables; falls FK-Konflikt: regulaere Tabelle reicht voellig fuer Snapshots).
 DO $$ BEGIN

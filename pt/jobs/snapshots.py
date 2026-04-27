@@ -45,10 +45,14 @@ _DAY_END = time(hour=23, minute=59, second=59, microsecond=999_999, tzinfo=timez
 class SnapshotRow:
     portfolio_id: int
     snapshot_date: date
-    total_value: Decimal
+    # `total_value` is None when the portfolio has open holdings on
+    # `snapshot_date` but NONE could be priced (no candle at-or-before).
+    # Storing 0 there is a lie — it would draw the equity curve down to
+    # zero on every history-less day. Empty portfolios still get 0.
+    total_value: Decimal | None
     total_cost_basis: Decimal
     realized_pnl: Decimal
-    unrealized_pnl: Decimal
+    unrealized_pnl: Decimal | None
     cash: Decimal
     holdings_count: int
     metadata: dict
@@ -90,40 +94,58 @@ def compute_snapshot(portfolio_id: int, snapshot_date: date) -> SnapshotRow:
     keys = list(qty_per.keys())
     price_map = _prices.latest_close_many(keys, as_of=end) if keys else {}
 
-    total_value = Decimal("0")
+    total_value_naive = Decimal("0")
     by_asset_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     priced_count = 0
+    open_holding_count = sum(1 for q in qty_per.values() if q > 0)
     for (sym, at), qty in qty_per.items():
         price, _ts = price_map.get((sym, at), (None, None))
         if price is None or qty <= 0:
             continue
         market_value = qty * price
-        total_value += market_value
+        total_value_naive += market_value
         by_asset_type[at] += market_value
         ccy = currency_per.get((sym, at), "USD")
         by_currency[ccy] += market_value
         priced_count += 1
 
+    # If we hold positions but priced none of them, the snapshot can't say
+    # "the portfolio is worth 0" — it has to say "I don't know". Empty
+    # portfolios (no open holdings) legitimately value at 0.
+    if open_holding_count > 0 and priced_count == 0:
+        total_value: Decimal | None = None
+    else:
+        total_value = total_value_naive
+
     open_cost = sum(cost_per.values(), Decimal("0"))
-    unrealized = total_value - open_cost if total_value > 0 else Decimal("0")
+    if total_value is None:
+        unrealized: Decimal | None = None
+    else:
+        unrealized = total_value - open_cost if total_value > 0 else Decimal("0")
 
     # FX-aware base-currency total: walk each source-currency bucket through
     # `money.convert(...)` and sum. If any single bucket has no rate path
     # the whole base-total is None — partial sums would be misleading
-    # ("looks low" instead of "incomplete").
+    # ("looks low" instead of "incomplete"). When `total_value` is None
+    # (couldn't price ANY holding) the base total is None too — there's
+    # nothing to convert.
     portfolio = _portfolios.get(portfolio_id)
     base_ccy = (portfolio or {}).get("base_currency") or "EUR"
-    total_value_base: Decimal | None = Decimal("0")
-    for ccy, sub in by_currency.items():
-        if total_value_base is None:
-            break
-        try:
-            total_value_base += _money.convert(
-                sub, ccy, base_ccy, on_date=snapshot_date,
-            )
-        except (ValueError, LookupError):
-            total_value_base = None
+    total_value_base: Decimal | None
+    if total_value is None:
+        total_value_base = None
+    else:
+        total_value_base = Decimal("0")
+        for ccy, sub in by_currency.items():
+            if total_value_base is None:
+                break
+            try:
+                total_value_base += _money.convert(
+                    sub, ccy, base_ccy, on_date=snapshot_date,
+                )
+            except (ValueError, LookupError):
+                total_value_base = None
     # Empty portfolios still get base=0 (matches total_value=0).
 
     metadata = {
