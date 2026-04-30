@@ -11,6 +11,7 @@ import BenchmarkPicker from '../components/BenchmarkPicker'
 import BenchmarkSyncBanner from '../components/BenchmarkSyncBanner'
 import { useBenchmark } from '../state/benchmark'
 import { useBenchmarkOverlay } from '../lib/benchmark'
+import { useTimeRange } from '../state/timeRange'
 
 const METHODS = ['fifo', 'lifo', 'average'] as const
 type Method = (typeof METHODS)[number]
@@ -20,11 +21,22 @@ export default function Performance() {
   const [method, setMethod] = useState<Method>('fifo')
   const [year, setYear] = useState<string>('')
   const [period, setPeriod] = useState<Period>('1Y')
-  const start = useMemo(() => periodStart(period), [period])
+  const { range } = useTimeRange()
+  // Resolve the active period (preset OR custom range from `useTimeRange`)
+  // into a concrete `start`/`end` pair the backend can clip on.
+  const { start, end } = useMemo(() => {
+    if (period === 'CUSTOM' && range.kind === 'custom') {
+      return { start: range.from, end: range.to }
+    }
+    return { start: periodStart(period), end: undefined as string | undefined }
+  }, [period, range])
 
   const summary = useQuery({
-    queryKey: ['perf-summary', activeId, method, start],
-    queryFn: () => api.performanceSummary(activeId!, method),
+    queryKey: ['perf-summary', activeId, method, start, end],
+    queryFn: () => api.performanceSummary(activeId!, method, {
+      start: start ?? undefined,
+      end,
+    }),
     enabled: activeId != null,
   })
   const cb = useQuery({
@@ -33,8 +45,15 @@ export default function Performance() {
     enabled: activeId != null,
   })
   const realized = useQuery({
-    queryKey: ['realized', activeId, method, year],
-    queryFn: () => api.realized(activeId!, { method, year: year ? Number(year) : undefined }),
+    queryKey: ['realized', activeId, method, year, start, end],
+    queryFn: () => api.realized(activeId!, {
+      method,
+      year: year ? Number(year) : undefined,
+      // When the user has a Year filter set, prefer that. Otherwise scope
+      // realized to the current period so the table matches the cards above.
+      start: year ? undefined : (start ?? undefined),
+      end: year ? undefined : end,
+    }),
     enabled: activeId != null,
   })
   const snaps = useQuery({
@@ -43,17 +62,21 @@ export default function Performance() {
     enabled: activeId != null,
   })
 
-  if (activeId == null) return <EmptyPortfolio />
-
+  // Keep all hook calls above the early-return — React enforces stable order.
   const visibleSnaps = useMemo(() => {
     if (!snaps.data) return []
-    if (!start) return snaps.data.snapshots
-    return snaps.data.snapshots.filter(s => s.date >= start)
-  }, [snaps.data, start])
+    let rows = snaps.data.snapshots
+    if (start) rows = rows.filter(s => s.date >= start)
+    if (end)   rows = rows.filter(s => s.date <= end)
+    return rows
+  }, [snaps.data, start, end])
   const { selected: benchmarkSel } = useBenchmark()
   const benchmarkOverlay = useBenchmarkOverlay(benchmarkSel, visibleSnaps)
 
+  if (activeId == null) return <EmptyPortfolio />
+
   const ts = summary.data?.timeseries ?? null
+  const periodLabel = describePeriod(period, start, end)
 
   return (
     <div className="space-y-6">
@@ -62,7 +85,7 @@ export default function Performance() {
           Performance
         </h1>
         <div className="flex items-center gap-3 flex-wrap">
-          <PeriodSelector value={period} onChange={setPeriod} />
+          <PeriodSelector value={period} onChange={setPeriod} showCustomPicker />
           <div>
             <label className="text-xs mr-2" style={{ color: 'var(--text-tertiary)' }}>
               Method
@@ -92,7 +115,7 @@ export default function Performance() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <MetricCard
           title="Time-Weighted Return"
-          subtitle="period · annualized"
+          subtitle={`${periodLabel} · annualized`}
           loading={summary.isLoading}
           missingHint={!ts ? 'needs snapshots' : null}
           rows={ts ? [
@@ -102,7 +125,7 @@ export default function Performance() {
         />
         <MetricCard
           title="Money-Weighted Return"
-          subtitle="XIRR (your cash-flows)"
+          subtitle={`XIRR · ${periodLabel}`}
           loading={summary.isLoading}
           missingHint={!ts ? 'needs snapshots' : null}
           rows={ts ? [
@@ -111,7 +134,7 @@ export default function Performance() {
         />
         <MetricCard
           title="Risk profile"
-          subtitle="vola · DD · Sharpe · Calmar"
+          subtitle={`vola · DD · Sharpe · Calmar (${periodLabel})`}
           loading={summary.isLoading}
           missingHint={!ts ? 'needs snapshots' : null}
           rows={ts ? [
@@ -314,6 +337,19 @@ function formatRatio(s: string): string {
   const n = Number(s)
   if (!Number.isFinite(n)) return '—'
   return `${pnlSign(n)}${n.toFixed(2)}`
+}
+
+function describePeriod(p: Period, start: string | null, end?: string): string {
+  if (p === 'CUSTOM' && start && end) return `${start} → ${end}`
+  if (p === 'ALL' || start == null) return 'ALL'
+  switch (p) {
+    case '1W':  return 'last 7 days'
+    case '1M':  return 'last month'
+    case '3M':  return 'last 3 months'
+    case 'YTD': return 'year-to-date'
+    case '1Y':  return 'last year'
+    default:    return p
+  }
 }
 
 function MetricCard({

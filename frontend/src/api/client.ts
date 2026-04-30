@@ -95,6 +95,39 @@ export type PerformanceSummary = {
   } | null
 }
 
+/** Period codes shared with `pt/api/routes/performance.py:_PERIOD_KEYS`.
+ *  Keep this list in sync with the backend — the API contract uses these
+ *  exact strings as keys in the response. */
+export type PeriodCode = '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL'
+
+export type PerformancePeriod = {
+  from: string
+  to: string
+  start_value: string
+  end_value: string
+  abs_change: string
+  simple_pct: string
+  /** Cashflow-clean TWR over the window. May be null when math is undefined
+   *  (e.g. the baseline snapshot has zero/null total_value). */
+  twr_pct: string | null
+  cashflow: string
+  realized: string
+  /** `'base'` when both endpoints have FX-converted total_value_base;
+   *  `'naive'` when source-currency totals are used. The frontend renders
+   *  a "mixed currency" hint in `'naive'` mode for multi-currency portfolios. */
+  mode: 'base' | 'naive'
+}
+
+export type PerformancePeriodsResponse = {
+  /** Latest snapshot date the answer was computed against. Null if no snapshots exist. */
+  as_of: string | null
+  base_currency: string
+  /** Subset of {1D, 1W, 1M, 3M, YTD, 1Y, ALL}. Only periods with a usable
+   *  baseline are present — a fresh portfolio with two snapshots a week
+   *  apart will only contain ALL and 1W. */
+  periods: Partial<Record<PeriodCode, PerformancePeriod>>
+}
+
 export type Snapshot = {
   date: string
   // `null` when the snapshot couldn't price ANY holding — e.g. backfill on
@@ -264,18 +297,36 @@ export const api = {
     ),
 
   // Performance
-  performanceSummary: (portfolioId: number, method = 'fifo') =>
-    request<PerformanceSummary>(
-      `/portfolios/${portfolioId}/performance/summary?method=${method}`,
+  performanceSummary: (
+    portfolioId: number,
+    method = 'fifo',
+    opts: { start?: string; end?: string } = {},
+  ) => {
+    const qs = new URLSearchParams()
+    qs.set('method', method)
+    if (opts.start) qs.set('start', opts.start)
+    if (opts.end)   qs.set('end',   opts.end)
+    return request<PerformanceSummary>(
+      `/portfolios/${portfolioId}/performance/summary?${qs}`,
+    )
+  },
+  performancePeriods: (portfolioId: number, method = 'fifo') =>
+    request<PerformancePeriodsResponse>(
+      `/portfolios/${portfolioId}/performance/periods?method=${method}`,
     ),
   costBasis: (portfolioId: number, method = 'fifo') =>
     request<CostBasisReport>(
       `/portfolios/${portfolioId}/performance/cost-basis?method=${method}`,
     ),
-  realized: (portfolioId: number, opts: { method?: string; year?: number } = {}) => {
+  realized: (
+    portfolioId: number,
+    opts: { method?: string; year?: number; start?: string; end?: string } = {},
+  ) => {
     const qs = new URLSearchParams()
     qs.set('method', opts.method ?? 'fifo')
-    if (opts.year) qs.set('year', String(opts.year))
+    if (opts.year)  qs.set('year',  String(opts.year))
+    if (opts.start) qs.set('start', opts.start)
+    if (opts.end)   qs.set('end',   opts.end)
     return request<RealizedReport>(`/portfolios/${portfolioId}/performance/realized?${qs}`)
   },
 

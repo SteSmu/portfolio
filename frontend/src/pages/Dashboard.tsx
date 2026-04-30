@@ -1,24 +1,37 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, type PeriodCode, type Snapshot } from '../api/client'
 import { useActivePortfolio } from '../state/portfolio'
 import { fmtMoney, fmtPct, fmtQty, pnlSign } from '../lib/format'
 import EmptyPortfolio from '../components/EmptyPortfolio'
 import EquityCurve from '../components/charts/EquityCurve'
 import Sparkline from '../components/charts/Sparkline'
 import PeriodSelector, { type Period, periodStart } from '../components/PeriodSelector'
+import PeriodCard from '../components/PeriodCard'
 import BenchmarkPicker from '../components/BenchmarkPicker'
 import BenchmarkSyncBanner from '../components/BenchmarkSyncBanner'
 import { useBenchmark } from '../state/benchmark'
 import { useBenchmarkOverlay } from '../lib/benchmark'
 
+const HERO_PERIODS: Array<{ code: PeriodCode; label: string }> = [
+  { code: '1D',  label: '1T'  },
+  { code: '1W',  label: '7T'  },
+  { code: '1M',  label: '1M'  },
+  { code: '3M',  label: '3M'  },
+  { code: 'YTD', label: 'YTD' },
+  { code: '1Y',  label: '1J'  },
+]
+
 export default function Dashboard() {
   const { activeId } = useActivePortfolio()
   const qc = useQueryClient()
 
-  const [period, setPeriod] = useState<Period>('3M')
-  const start = useMemo(() => periodStart(period), [period])
+  // Period selector now only drives the equity-curve window. The hero KPI
+  // cards always show all six periods at once — that's the point of the
+  // redesign.
+  const [chartPeriod, setChartPeriod] = useState<Period>('3M')
+  const chartStart = useMemo(() => periodStart(chartPeriod), [chartPeriod])
   const { selected: benchmarkSel } = useBenchmark()
 
   const summary = useQuery({
@@ -26,12 +39,16 @@ export default function Dashboard() {
     queryFn: () => api.performanceSummary(activeId!),
     enabled: activeId != null,
   })
+  const periods = useQuery({
+    queryKey: ['perf-periods', activeId],
+    queryFn: () => api.performancePeriods(activeId!),
+    enabled: activeId != null,
+  })
   const holdings = useQuery({
     queryKey: ['holdings', activeId],
     queryFn: () => api.listHoldings(activeId!),
     enabled: activeId != null,
   })
-  // Always pull the full series for delta computation; the chart slices what it shows.
   const snaps = useQuery({
     queryKey: ['snapshots', activeId],
     queryFn: () => api.listSnapshots(activeId!),
@@ -48,28 +65,32 @@ export default function Dashboard() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['snapshots', activeId] })
       qc.invalidateQueries({ queryKey: ['perf-summary', activeId] })
+      qc.invalidateQueries({ queryKey: ['perf-periods', activeId] })
     },
   })
+
+  // Hooks must be called in the same order every render — keep them ABOVE
+  // the early-return for the no-portfolio state.
+  const visibleSnaps = useMemo(() => {
+    if (!snaps.data) return []
+    if (!chartStart) return snaps.data.snapshots
+    return snaps.data.snapshots.filter(s => s.date >= chartStart)
+  }, [snaps.data, chartStart])
+  const benchmarkOverlay = useBenchmarkOverlay(benchmarkSel, visibleSnaps)
 
   if (activeId == null) return <EmptyPortfolio />
 
   // Latest snapshot with a real value — backfill rows that pre-date the
   // candle history get total_value=null and would otherwise dash the KPI.
-  const latest = snaps.data?.snapshots
-    .filter(s => s.total_value != null)
-    .at(-1)
-  const visibleSnaps = useMemo(() => {
-    if (!snaps.data) return []
-    if (!start) return snaps.data.snapshots
-    return snaps.data.snapshots.filter(s => s.date >= start)
-  }, [snaps.data, start])
-  const benchmarkOverlay = useBenchmarkOverlay(benchmarkSel, visibleSnaps)
+  const latest = snaps.data?.snapshots.filter(s => s.total_value != null).at(-1)
 
   // Prefer FX-converted total_value_base when available; fall back to FX-naive
   // total_value with a "mixed currencies" caveat. The snapshot job emits
   // total_value_base = null when at least one currency bucket has no rate path
   // for that day — surfacing the caveat reminds the user to run `pt sync fx`.
-  const baseCcy = (latest?.metadata?.base_currency as string | undefined) ?? 'EUR'
+  const baseCcy = (periods.data?.base_currency)
+                  ?? (latest?.metadata?.base_currency as string | undefined)
+                  ?? 'EUR'
   const baseAvailable = latest?.total_value_base != null
   const totalValue = latest
     ? Number(baseAvailable ? latest.total_value_base : latest.total_value)
@@ -78,62 +99,90 @@ export default function Dashboard() {
   const unrealized = latest && latest.unrealized_pnl != null ? Number(latest.unrealized_pnl) : null
   const realized   = summary.data ? Number(summary.data.realized_pnl) : null
 
-  const heroDeltas = useMemo<[string, number | null][]>(() => {
-    const snapsArr = snaps.data?.snapshots ?? []
-    if (snapsArr.length === 0) return []
-    const items: [string, number | null][] = []
-    // 1d is always shown — the user wants to know "what did today do".
-    items.push(['1d', deltaPct(snapsArr, 1, baseAvailable)])
-    // Second slot mirrors the active PeriodSelector. For 1W that's just
-    // 7d (no need to repeat); other periods get an anchored "since X"
-    // calculation so YTD really starts on Jan 01, etc.
-    if (period === '1W') {
-      items.push(['7d', deltaPct(snapsArr, 7, baseAvailable)])
-    } else {
-      items.push(['7d', deltaPct(snapsArr, 7, baseAvailable)])
-      items.push([period, deltaPctSince(snapsArr, start, baseAvailable)])
-    }
-    return items
-  }, [snaps.data, period, start, baseAvailable])
-
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
-          Dashboard
-        </h1>
-        <PeriodSelector value={period} onChange={setPeriod} />
-      </div>
+      <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+        Dashboard
+      </h1>
 
-      {/* Hero — primary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard
-          label={baseAvailable ? `Portfolio value (${baseCcy})` : 'Portfolio value (mixed)'}
-          primary={totalValue != null ? fmtMoney(totalValue) : '—'}
-          deltas={latest ? heroDeltas : []}
-          loading={snaps.isLoading}
-          caveat={!baseAvailable && latest != null
-            ? 'mixed currencies — run `pt sync fx`'
-            : undefined}
-        />
-        <KpiCard
-          label="Cost basis"
-          primary={costBasis != null ? fmtMoney(costBasis) : '—'}
-          loading={summary.isLoading}
-        />
-        <KpiCard
-          label="Unrealized P&L"
-          primary={unrealized != null ? fmtMoney(unrealized) : '—'}
-          tone={tone(unrealized)}
-          loading={snaps.isLoading}
-        />
-        <KpiCard
-          label="Realized P&L"
-          primary={realized != null ? fmtMoney(realized) : '—'}
-          tone={tone(realized)}
-          loading={summary.isLoading}
-        />
-      </div>
+      {/* Hero — one big portfolio-value card + six period cards stacked below */}
+      <section className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="card lg:col-span-1">
+          <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
+            {baseAvailable ? `Portfolio value (${baseCcy})` : 'Portfolio value (mixed)'}
+          </div>
+          {snaps.isLoading ? (
+            <div className="skeleton h-9 w-40 mt-2" />
+          ) : (
+            <div
+              className="text-3xl font-bold mt-1 tabular-nums"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {totalValue != null ? fmtMoney(totalValue) : '—'}
+            </div>
+          )}
+          {!baseAvailable && latest != null && (
+            <div className="text-[11px] mt-1" style={{ color: 'var(--loss)' }}
+                 title="mixed currencies — run `pt sync fx`">
+              ⚠ mixed currencies — run <code>pt sync fx</code>
+            </div>
+          )}
+          <dl className="mt-3 space-y-1 text-sm">
+            <div className="flex justify-between">
+              <dt style={{ color: 'var(--text-tertiary)' }}>Cost basis</dt>
+              <dd className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                {costBasis != null ? fmtMoney(costBasis) : '—'}
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt style={{ color: 'var(--text-tertiary)' }}>Unrealized</dt>
+              <dd
+                className="tabular-nums"
+                style={{
+                  color: tone(unrealized) === 'gain' ? 'var(--gain)'
+                       : tone(unrealized) === 'loss' ? 'var(--loss)'
+                       : 'var(--text-secondary)',
+                }}
+              >
+                {unrealized != null ? fmtMoney(unrealized) : '—'}
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt style={{ color: 'var(--text-tertiary)' }}>Realized</dt>
+              <dd
+                className="tabular-nums"
+                style={{
+                  color: tone(realized) === 'gain' ? 'var(--gain)'
+                       : tone(realized) === 'loss' ? 'var(--loss)'
+                       : 'var(--text-secondary)',
+                }}
+              >
+                {realized != null ? fmtMoney(realized) : '—'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <div className="lg:col-span-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {HERO_PERIODS.map(p => {
+            const data = periods.data?.periods?.[p.code] ?? null
+            const sparkline = data
+              ? sliceSeries(snaps.data?.snapshots ?? [], data.from, data.to, baseAvailable)
+              : []
+            return (
+              <PeriodCard
+                key={p.code}
+                code={p.code}
+                label={p.label}
+                data={data}
+                sparkline={sparkline}
+                currency={periods.data?.base_currency ?? baseCcy}
+                loading={periods.isLoading || snaps.isLoading}
+              />
+            )
+          })}
+        </div>
+      </section>
 
       {/* Equity curve */}
       <section className="card">
@@ -143,6 +192,7 @@ export default function Dashboard() {
               Equity curve
             </h2>
             <BenchmarkPicker />
+            <PeriodSelector value={chartPeriod} onChange={setChartPeriod} showCustomPicker />
           </div>
           {snaps.data && snaps.data.snapshots.length > 0 && (
             <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
@@ -196,120 +246,28 @@ function tone(v: number | null | undefined): 'gain' | 'loss' | undefined {
   return undefined
 }
 
-type DeltaSnap = { date: string; total_value: string | null; total_value_base: string | null }
-
-function deltaPct(
-  snaps: DeltaSnap[],
-  lookbackDays: number,
-  preferBase = false,
-): number | null {
-  if (snaps.length < 2) return null
-  const last = snaps[snaps.length - 1]
-  // Find a snapshot at-or-before (last.date - lookbackDays).
-  const target = new Date(last.date)
-  target.setDate(target.getDate() - lookbackDays)
-  const targetIso = target.toISOString().slice(0, 10)
-  return computeDelta(snaps, targetIso, last, preferBase)
-}
-
 /**
- * Same delta math as `deltaPct` but anchored to a calendar date instead of
- * a numeric lookback. Powers period-aware Hero deltas so e.g. YTD really
- * means "from Jan 01 of the current year" rather than "the last 365 days".
- *
- * `sinceIso = null` (PeriodSelector returns null for ALL) compares to the
- * very first snapshot in the series.
+ * Slice the snapshot series to `[fromIso, toIso]` and project each row to a
+ * `[date, value]` pair using FX-converted totals when both endpoints have
+ * them — same rule as `pickEquitySeries`. Used by `<PeriodCard>` for its
+ * inline sparkline.
  */
-function deltaPctSince(
-  snaps: DeltaSnap[],
-  sinceIso: string | null,
-  preferBase = false,
-): number | null {
-  if (snaps.length < 2) return null
-  const last = snaps[snaps.length - 1]
-  // For ALL → anchor to the earliest snapshot so the user sees lifetime change.
-  if (sinceIso == null) {
-    return computeDelta(snaps, snaps[0].date, last, preferBase)
-  }
-  return computeDelta(snaps, sinceIso, last, preferBase)
-}
-
-function computeDelta(
-  snaps: DeltaSnap[],
-  baselineCutoffIso: string,
-  last: DeltaSnap,
+function sliceSeries(
+  snaps: Snapshot[],
+  fromIso: string,
+  toIso: string,
   preferBase: boolean,
-): number | null {
-  // Pick the snapshot at-or-before the cutoff (mirrors the ECharts
-  // visibleSnaps slice: any snapshot >= start is "in the window", so the
-  // first one in-window approximates the period's opening level).
-  let baseline = snaps[0]
-  for (let i = snaps.length - 1; i >= 0; i--) {
-    if (snaps[i].date <= baselineCutoffIso) { baseline = snaps[i]; break }
+): Array<[string, number]> {
+  const out: Array<[string, number]> = []
+  for (const s of snaps) {
+    if (s.date < fromIso || s.date > toIso) continue
+    if (s.total_value == null) continue
+    const useBase = preferBase && s.total_value_base != null
+    const v = Number(useBase ? s.total_value_base : s.total_value)
+    if (!Number.isFinite(v) || v <= 0) continue
+    out.push([s.date, v])
   }
-  // Use FX-converted values when both endpoints have them (apples-to-apples
-  // across the lookback window). Otherwise fall back to FX-naive.
-  const useBase = preferBase
-                  && baseline.total_value_base != null
-                  && last.total_value_base != null
-  const a = Number(useBase ? baseline.total_value_base : baseline.total_value)
-  const b = Number(useBase ? last.total_value_base : last.total_value)
-  if (a <= 0) return null
-  return (b - a) / a
-}
-
-function KpiCard({
-  label, primary, deltas, tone, loading, caveat,
-}: {
-  label: string
-  primary: string
-  deltas?: [string, number | null][]
-  tone?: 'gain' | 'loss'
-  loading?: boolean
-  caveat?: string
-}) {
-  return (
-    <div className="card">
-      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
-        {label}
-      </div>
-      {loading ? (
-        <div className="skeleton h-7 w-32 mt-2" />
-      ) : (
-        <div
-          className="text-2xl font-bold mt-1 tabular-nums"
-          style={{ color: tone ? `var(--${tone})` : 'var(--text-primary)' }}
-        >
-          {primary}
-        </div>
-      )}
-      {caveat && !loading && (
-        <div className="text-[11px] mt-1" style={{ color: 'var(--loss)' }} title={caveat}>
-          ⚠ {caveat}
-        </div>
-      )}
-      {deltas && deltas.length > 0 && !loading && (
-        <div className="flex gap-3 mt-2 text-xs">
-          {deltas.map(([k, v]) => (
-            <span key={k}>
-              <span style={{ color: 'var(--text-tertiary)' }}>{k}:</span>{' '}
-              <span
-                className="tabular-nums"
-                style={{
-                  color: v == null ? 'var(--text-tertiary)'
-                       : v > 0 ? 'var(--gain)'
-                       : v < 0 ? 'var(--loss)'
-                       : 'var(--text-secondary)',
-                }}
-              >
-                {v == null ? '—' : `${pnlSign(v)}${fmtPct(v)}`}
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+  return out
 }
 
 function NoSnapshots({

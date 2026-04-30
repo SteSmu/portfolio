@@ -8,6 +8,13 @@
       "cwd": "frontend",
       "port": 5175,
       "autoPort": true
+    },
+    {
+      "name": "backend-dev",
+      "runtimeExecutable": ".venv/bin/uvicorn",
+      "runtimeArgs": ["pt.api.app:app", "--reload", "--port", "8430"],
+      "port": 8430,
+      "env": { "PT_DB_PORT": "5434" }
     }
   ]
 }
